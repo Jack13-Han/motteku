@@ -1,0 +1,14 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /sharedTrips/{tripId}/bags/{fileName} {
+      allow read: if request.auth != null
+        && firestore.exists(/databases/(default)/documents/sharedTrips/$(tripId)/members/$(request.auth.uid));
+      allow create, update: if request.auth != null
+        && firestore.exists(/databases/(default)/documents/sharedTrips/$(tripId)/members/$(request.auth.uid))
+        && request.resource.size < 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if false;
+    }
+  }
+}
