@@ -7,7 +7,7 @@ type Translator = (text: string) => string;
 const LanguageContext = createContext<{ language: Language; setLanguage: (language: Language) => void; t: Translator } | null>(null);
 
 const ja: Record<string, string> = {
-  'Pack together, go further': 'みんなで準備して、もっと遠くへ', WORKSPACE: 'ワークスペース',
+  'Pack together, go further': 'みんなで準備して、もっと遠くへ', WORKSPACE: 'ワークスペース', 'Expand sidebar': 'サイドバーを展開', 'Collapse sidebar': 'サイドバーを折りたたむ', 'Log out': 'ログアウト', 'Signing out…': 'ログアウト中…', 'Could not log out. Please try again.': 'ログアウトできませんでした。もう一度お試しください。',
   'Overview': '概要', 'Packing list': '持ち物リスト', 'Bags & photos': 'バッグ・写真', 'Group chat': 'グループチャット', Reminders: 'リマインダー', Members: 'メンバー', Budget: '予算', 'Weather & AI': '天気・AI', History: '履歴',
   'Firebase connected mode': 'Firebase 接続中', 'Local demo mode': 'ローカルデモモード', 'Changes sync to Firestore': '変更は Firestore に同期されます', 'Data saved in this browser': 'データはこのブラウザーに保存されます',
   'YOUR NEXT ADVENTURE STARTS HERE': '次の冒険をここから始めよう', 'Trip overview': '旅行の概要', 'Packing checklist': '持ち物チェックリスト', 'Bags & item locations': 'バッグと荷物の場所', 'Trip group chat': '旅行グループチャット', 'Preparation reminders': '旅行準備リマインダー', 'Your travel crew': '旅行メンバー', 'Budget & expenses': '予算と支出', 'Weather & smart advice': '天気とおすすめ', 'Trip history': '旅行履歴',
