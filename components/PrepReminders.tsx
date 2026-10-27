@@ -1,0 +1,16 @@
+'use client';
+import { useEffect, useMemo, useState } from 'react';
+import { Bell, CalendarDays } from 'lucide-react';
+import { useLanguage } from '@/lib/i18n';
+type ReminderItem={id:string;name:string;status:string};
+export default function PrepReminders({tripId,tripName,startDate,prepStartDate,items,onPrepDate,onNotice}:{tripId:string;tripName:string;startDate:string;prepStartDate?:string;items:ReminderItem[];onPrepDate:(date:string)=>void;onNotice:(message:string)=>void}){
+ const {t}=useLanguage();
+ const [permission,setPermission]=useState('default');const [now,setNow]=useState(new Date());
+ useEffect(()=>{if('Notification'in window)setPermission(Notification.permission);const timer=window.setInterval(()=>setNow(new Date()),60000);return()=>clearInterval(timer)},[]);
+ const reminders=useMemo(()=>[{date:prepStartDate||startDate,label:t('Preparation starts'),detail:t('Review the plan and buy the remaining items.')},{date:shiftDay(startDate,-1),label:t('Day before departure'),detail:t('Pack and verify the bags before departure.')},{date:startDate,label:t('Trip departure'),detail:t('Final check before leaving for this trip.')}].sort((a,b)=>a.date.localeCompare(b.date)),[prepStartDate,startDate,t]);
+ useEffect(()=>{if(permission!=='granted')return;const today=localDate(now);const due=reminders.filter(r=>r.date===today);for(const r of due){const key=`motteku-notified-${tripId}-${r.date}-${r.label}`;if(localStorage.getItem(key))continue;try{new Notification(`${r.label}: ${tripName}`,{body:r.detail,tag:key});localStorage.setItem(key,'1')}catch{}}},[now,permission,reminders,tripId,tripName]);
+ const enable=async()=>{if(!('Notification'in window)){onNotice('This browser does not support notifications.');return}const result=await Notification.requestPermission();setPermission(result);if(result==='granted')onNotice('Notifications enabled. Keep Motteku open to receive reminders.');else onNotice('Notification permission was not granted.');};
+ return <section className="panel page-panel"><div className="panel-head"><div><h3><Bell size={17}/> {t("Preparation reminders")}</h3><p>{t("Set when your group starts preparing for the trip.")}</p></div><CalendarDays className="muted-icon"/></div><label className="field-label">{t("Start preparing on")}<input type="date" max={startDate} value={prepStartDate||startDate} onChange={e=>onPrepDate(e.target.value)}/></label><button className="primary" onClick={enable} disabled={permission==='granted'}><Bell size={16}/>{t(permission==='granted'?'Browser notifications enabled':'Enable browser notifications')}</button><div className="reminder-list">{reminders.map(r=><div className="reminder-row" key={r.label}><time>{r.date}</time><div><b>{r.label}</b><small>{r.detail}</small></div></div>)}</div><p className="helper-note">{t("Reminders appear in this app, and browser notifications fire on these dates while Motteku is open. Background reminders while the browser is closed need a deployed push-notification server.")}</p></section>
+}
+function localDate(d:Date){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${day}`}
+function shiftDay(day:string,n:number){const d=new Date(`${day}T12:00:00`);d.setDate(d.getDate()+n);return localDate(d)}

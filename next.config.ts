@@ -1,3 +1,6 @@
 import type { NextConfig } from 'next';
-const nextConfig: NextConfig = {};
+const nextConfig: NextConfig = {
+  // Keep development chunks separate from `next build` output.
+  distDir: process.env.NODE_ENV === 'development' ? '.next-dev' : '.next',
+};
 export default nextConfig;
