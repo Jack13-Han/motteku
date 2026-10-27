@@ -31,6 +31,33 @@ const ja: Record<string, string> = {
   'This browser does not support notifications.': 'このブラウザーは通知に対応していません。', 'Notifications enabled. Keep Motteku open to receive reminders.': '通知を有効にしました。リマインダーを受け取るには Motteku を開いたままにしてください。', 'Notification permission was not granted.': '通知の許可がありません。',
   'Bag photo could not sync.': 'バッグの写真を同期できませんでした。',
   'Firebase sign-in failed. Check that Anonymous Authentication is enabled.': 'Firebase にサインインできません。匿名認証が有効か確認してください。', 'Firebase access was denied. Using local demo mode; publish firestore.rules in the matching Firebase project to restore cloud sync.': 'Firebase へのアクセスが拒否されました。ローカルデモモードで動作しています。同期するには該当する Firebase プロジェクトに firestore.rules を公開してください。', 'Trip created with a starter checklist.': '旅行を作成し、持ち物チェックリストを追加しました。', 'Unassigned items were distributed across members.': '未割り当ての持ち物をメンバーに分配しました。', 'Trip copied. Item statuses reset for the new trip.': '旅行をコピーしました。新しい旅行では持ち物の状態をリセットしました。', 'Trip moved to history.': '旅行を履歴に移動しました。', 'Select trip': '旅行を選択', Language: '言語', Japanese: '日本語', English: 'English', 'Delete item': '持ち物を削除',
+  'TRAVEL TOGETHER': 'みんなで旅しよう',
+  'Welcome back': 'おかえりなさい',
+  'Create your Motteku account': 'Motteku アカウントを作成',
+  'Create an account to keep your trip plans with you.': '旅行の計画を保存するアカウントを作成しましょう。',
+  'Log in to continue planning with your group.': 'ログインして、グループの旅行計画を続けましょう。',
+  'Full name': '氏名',
+  'Email address': 'メールアドレス',
+  Password: 'パスワード',
+  'At least 6 characters': '6文字以上',
+  'Create account': 'アカウントを作成',
+  'Please wait…': '処理中…',
+  'Already have an account?': 'すでにアカウントをお持ちですか？',
+  "Don't have an account?": 'アカウントをお持ちでないですか？',
+  Register: '新規登録',
+  'Back to Motteku': 'Motteku に戻る',
+  'Your group trip data stays in your account.': 'グループ旅行のデータはアカウントに保存されます。',
+  'Firebase Authentication is not configured. Check your Firebase project settings.': 'Firebase Authentication が設定されていません。Firebase プロジェクトの設定を確認してください。',
+  'Enter a valid email address.': '正しいメールアドレスを入力してください。',
+  'The email or password is incorrect.': 'メールアドレスまたはパスワードが正しくありません。',
+  'No account was found for this email.': 'このメールアドレスのアカウントが見つかりません。',
+  'An account already exists with this email.': 'このメールアドレスはすでに登録されています。',
+  'Use a password with at least 6 characters.': 'パスワードは6文字以上で入力してください。',
+  'Email and password sign-in is not enabled in Firebase.': 'Firebase でメールとパスワードによるログインが有効になっていません。',
+  'This email already belongs to another account. Log in instead.': 'このメールアドレスは別のアカウントで使用されています。ログインしてください。',
+  'Too many attempts. Please wait and try again.': '試行回数が多すぎます。しばらくしてからもう一度お試しください。',
+  'Could not connect. Check your internet connection.': '接続できません。インターネット接続を確認してください。',
+  'Something went wrong. Please try again.': 'エラーが発生しました。もう一度お試しください。',
 };
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
@@ -50,3 +77,4 @@ export function useLanguage() {
   if (!context) throw new Error('useLanguage must be used within LanguageProvider');
   return context;
 }
+

@@ -6,3 +6,24 @@
 @media(max-width:720px){.chat-send{grid-template-columns:1fr 44px}.chat-send input:first-child{grid-column:1/-1}.bag-grid{grid-template-columns:1fr}}
 
 .language-select{min-width:92px!important;padding:9px 10px!important;font-weight:600}
+.auth-page{min-height:100vh;display:grid;place-items:center;padding:32px 16px;background:radial-gradient(circle at 15% 10%,#eeeaff 0,transparent 32%),var(--bg)}
+.auth-card{width:min(100%,440px);background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:30px;box-shadow:0 18px 60px #34395b12}
+.auth-back{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:12px;text-decoration:none}
+.auth-brand{display:flex;align-items:center;gap:10px;margin-top:24px;font-family:Manrope,sans-serif;font-weight:800;font-size:22px;color:var(--text)}
+.auth-mark{width:38px;height:38px;display:grid;place-items:center;border-radius:12px;background:#eae6ff;color:var(--purple)}
+.auth-eyebrow{margin:26px 0 7px;color:var(--purple);font-size:10px;font-weight:800;letter-spacing:1.4px}
+.auth-card h1{margin:0;font-family:Manrope,sans-serif;font-size:25px;letter-spacing:-.6px}
+.auth-description{margin:9px 0 22px;color:var(--muted);font-size:12px;line-height:1.6}
+.auth-form{display:grid;gap:15px}
+.auth-form label{display:grid;gap:7px;font-size:11px;font-weight:700;color:#64697c}
+.auth-input-wrap{display:flex;align-items:center;gap:9px;border:1px solid #e6e8ef;border-radius:10px;padding:0 11px;color:#969bad;background:#fff}
+.auth-input-wrap:focus-within{border-color:#a9a0f6;box-shadow:0 0 0 3px #f0edff}
+.auth-input-wrap input{width:100%;min-width:0;border:0;outline:0;box-shadow:none!important;padding:12px 0;background:transparent}
+.auth-submit{width:100%;margin-top:3px}
+.auth-error{margin:0;padding:10px 12px;border-radius:9px;background:#fff0f2;color:#b33949;font-size:11px;line-height:1.5}
+.auth-switch{text-align:center;margin:20px 0 0;color:var(--muted);font-size:11px}
+.auth-switch a,.auth-link{color:var(--purple);font-weight:700;text-decoration:none}
+.auth-switch a:hover,.auth-link:hover{text-decoration:underline}
+.auth-link{white-space:nowrap;font-size:11px}
+.auth-note{margin:15px 0 0;text-align:center;color:#a0a3b2;font-size:10px}
+@media(max-width:720px){.auth-card{padding:24px 19px}.auth-link{font-size:10px}}
