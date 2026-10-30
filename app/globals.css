@@ -27,3 +27,5 @@
 .auth-link{white-space:nowrap;font-size:11px}
 .auth-note{margin:15px 0 0;text-align:center;color:#a0a3b2;font-size:10px}
 @media(max-width:720px){.auth-card{padding:24px 19px}.auth-link{font-size:10px}}
+
+.create-modal-backdrop{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:24px;background:rgba(23,25,42,.52);backdrop-filter:blur(3px)}.create-modal-backdrop .create-panel{width:min(100%,1040px);max-height:calc(100vh - 48px);overflow:auto;padding:26px;background:#fff;box-shadow:0 24px 80px #17192a3d}.create-modal-backdrop .panel-head{align-items:flex-start}.create-modal-backdrop .panel-head h3{font-size:20px}.create-modal-backdrop .icon-button{flex-shrink:0}@media(max-width:680px){.create-modal-backdrop{padding:12px}.create-modal-backdrop .create-panel{max-height:calc(100vh - 24px);padding:18px}.create-modal-backdrop .create-form{grid-template-columns:1fr}}
