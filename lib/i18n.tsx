@@ -57,6 +57,13 @@ const ja: Record<string, string> = {
   'This email already belongs to another account. Log in instead.': 'このメールアドレスは別のアカウントで使用されています。ログインしてください。',
   'Too many attempts. Please wait and try again.': '試行回数が多すぎます。しばらくしてからもう一度お試しください。',
   'Could not connect. Check your internet connection.': '接続できません。インターネット接続を確認してください。',
+  'Notifications': '通知',
+  'Close notifications': '通知を閉じる',
+  'Mark all as read': 'すべて既読にする',
+  'Item deadline': '持ち物の準備期限',
+  'Overdue': '期限切れ',
+  'Upcoming reminders for the next 7 days and overdue tasks.': '今後7日間の予定と、期限を過ぎた準備を表示します。',
+  'No notifications. You are all caught up!': '通知はありません。すべて確認済みです。',
   'Something went wrong. Please try again.': 'エラーが発生しました。もう一度お試しください。',
 };
 
