@@ -40,6 +40,7 @@ import TripChat from "@/components/TripChat";
 import BagPacking from "@/components/BagPacking";
 import PrepReminders from "@/components/PrepReminders";
 import NotificationCenter from "@/components/NotificationCenter";
+import AccountMenu from "@/components/AccountMenu";
 import { useLanguage } from "@/lib/i18n";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -699,9 +700,11 @@ export default function Home() {
                 setTab(nextTab);
               }}
             />
-            <Link className="auth-link" href="/login">
-              {tr("Log in")}
-            </Link>
+            {(!user || user.isAnonymous) && (
+              <Link className="auth-link" href="/login">
+                {tr("Log in")}
+              </Link>
+            )}
             <select
               aria-label={tr("Select trip")}
               value={active?.id || ""}
@@ -734,6 +737,9 @@ export default function Home() {
             >
               <Plus size={16} /> {tr("New trip")}
             </button>
+            {user && !user.isAnonymous && (
+              <AccountMenu key={user.uid} user={user} onLogout={handleLogout} loggingOut={loggingOut} />
+            )}
           </div>
         </header>
         {notice && (
