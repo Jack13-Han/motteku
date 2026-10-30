@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -15,6 +15,7 @@ import {
 import { ArrowLeft, LockKeyhole, Mail, UserRound } from 'lucide-react';
 import { auth, firebaseConfigured } from '@/lib/firebase';
 import { useLanguage } from '@/lib/i18n';
+import { safeReturnPath } from '@/lib/trips';
 
 type AuthFormProps = { mode: 'login' | 'register' };
 
@@ -37,7 +38,7 @@ function authErrorMessage(error: unknown) {
 
 export default function AuthForm({ mode }: AuthFormProps) {
   const router = useRouter();
-  const { language, t } = useLanguage();
+  const { language, setLanguage, t } = useLanguage();
   const isRegister = mode === 'register';
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -46,8 +47,12 @@ export default function AuthForm({ mode }: AuthFormProps) {
   const [authReady, setAuthReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [returnTo, setReturnTo] = useState('/');
+  const submitting = useRef(false);
 
   useEffect(() => {
+    const destination = safeReturnPath(new URLSearchParams(window.location.search).get('next'));
+    setReturnTo(destination);
     if (!firebaseConfigured || !auth) {
       setAuthReady(true);
       setError('Firebase Authentication is not configured. Check your Firebase project settings.');
@@ -56,7 +61,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
     return onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setAuthReady(true);
-      if (currentUser && !currentUser.isAnonymous) router.replace('/');
+      if (currentUser && !currentUser.isAnonymous && !submitting.current) router.replace(destination);
     });
   }, [router]);
 
@@ -64,6 +69,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
     event.preventDefault();
     if (!auth || !firebaseConfigured) return;
     setError('');
+    submitting.current = true;
     setBusy(true);
     try {
       const normalizedEmail = email.trim();
@@ -77,11 +83,12 @@ export default function AuthForm({ mode }: AuthFormProps) {
       } else {
         await signInWithEmailAndPassword(auth, normalizedEmail, password);
       }
-      router.replace('/');
+      router.replace(returnTo);
       router.refresh();
     } catch (submitError) {
       setError(authErrorMessage(submitError));
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
@@ -94,6 +101,9 @@ export default function AuthForm({ mode }: AuthFormProps) {
   return (
     <main className="auth-page">
       <section className="auth-card" aria-labelledby="auth-title">
+        <select aria-label={t('Language')} value={language} onChange={event => setLanguage(event.target.value as 'ja' | 'en')}>
+          <option value="ja">{t('Japanese')}</option><option value="en">{t('English')}</option>
+        </select>
         <Link className="auth-back" href="/" aria-label={t('Back to Motteku')}>
           <ArrowLeft size={16} /> {t('Back to Motteku')}
         </Link>
@@ -130,9 +140,9 @@ export default function AuthForm({ mode }: AuthFormProps) {
 
         <p className="auth-switch">
           {isRegister ? t('Already have an account?') : t("Don't have an account?")}{' '}
-          <Link href={isRegister ? '/login' : '/register'}>{t(isRegister ? 'Log in' : 'Register')}</Link>
+          <Link href={`${isRegister ? '/login' : '/register'}${returnTo !== '/' ? `?next=${encodeURIComponent(returnTo)}` : ''}`}>{t(isRegister ? 'Log in' : 'Register')}</Link>
         </p>
-        {language === 'ja' && <p className="auth-note">{t('Your group trip data stays in your account.')}</p>}
+        <p className="auth-note">{t('Your group trip data stays in your account.')}</p>
       </section>
     </main>
   );
