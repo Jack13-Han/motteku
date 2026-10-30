@@ -7,7 +7,7 @@ type Translator = (text: string) => string;
 const LanguageContext = createContext<{ language: Language; setLanguage: (language: Language) => void; t: Translator } | null>(null);
 
 const ja: Record<string, string> = {
-  'Pack together, go further': 'みんなで準備して、もっと遠くへ', WORKSPACE: 'ワークスペース',
+  'Pack together, go further': 'みんなで準備して、もっと遠くへ', WORKSPACE: 'ワークスペース', 'Expand sidebar': 'サイドバーを展開', 'Collapse sidebar': 'サイドバーを折りたたむ', 'Log out': 'ログアウト', 'Signing out…': 'ログアウト中…', 'Could not log out. Please try again.': 'ログアウトできませんでした。もう一度お試しください。',
   'Overview': '概要', 'Packing list': '持ち物リスト', 'Bags & photos': 'バッグ・写真', 'Group chat': 'グループチャット', Reminders: 'リマインダー', Members: 'メンバー', Budget: '予算', 'Weather & AI': '天気・AI', History: '履歴',
   'Firebase connected mode': 'Firebase 接続中', 'Local demo mode': 'ローカルデモモード', 'Changes sync to Firestore': '変更は Firestore に同期されます', 'Data saved in this browser': 'データはこのブラウザーに保存されます',
   'YOUR NEXT ADVENTURE STARTS HERE': '次の冒険をここから始めよう', 'Trip overview': '旅行の概要', 'Packing checklist': '持ち物チェックリスト', 'Bags & item locations': 'バッグと荷物の場所', 'Trip group chat': '旅行グループチャット', 'Preparation reminders': '旅行準備リマインダー', 'Your travel crew': '旅行メンバー', 'Budget & expenses': '予算と支出', 'Weather & smart advice': '天気とおすすめ', 'Trip history': '旅行履歴',
@@ -57,6 +57,13 @@ const ja: Record<string, string> = {
   'This email already belongs to another account. Log in instead.': 'このメールアドレスは別のアカウントで使用されています。ログインしてください。',
   'Too many attempts. Please wait and try again.': '試行回数が多すぎます。しばらくしてからもう一度お試しください。',
   'Could not connect. Check your internet connection.': '接続できません。インターネット接続を確認してください。',
+  'Notifications': '通知',
+  'Close notifications': '通知を閉じる',
+  'Mark all as read': 'すべて既読にする',
+  'Item deadline': '持ち物の準備期限',
+  'Overdue': '期限切れ',
+  'Upcoming reminders for the next 7 days and overdue tasks.': '今後7日間の予定と、期限を過ぎた準備を表示します。',
+  'No notifications. You are all caught up!': '通知はありません。すべて確認済みです。',
   'Something went wrong. Please try again.': 'エラーが発生しました。もう一度お試しください。',
 };
 
