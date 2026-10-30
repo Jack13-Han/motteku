@@ -1,13 +1,15 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { onAuthStateChanged, signInAnonymously, type User } from 'firebase/auth';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { onAuthStateChanged, signInAnonymously, signOut, type User } from 'firebase/auth';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { auth, db, firebaseConfigured } from '@/lib/firebase';
-import { CalendarDays, Check, CheckCheck, CloudSun, Copy, Download, History, ListChecks, LoaderCircle, MessageCircle, Plus, RefreshCw, ShoppingCart, Sparkles, Users, Wallet, Weight, X, TentTree, Trash2, Save, Cloud, ClipboardCheck } from 'lucide-react';
+import { CalendarDays, Check, CheckCheck, CloudSun, Copy, Download, History, ListChecks, LoaderCircle, MessageCircle, Plus, RefreshCw, ShoppingCart, Sparkles, Users, Wallet, Weight, X, TentTree, Trash2, Save, Cloud, ClipboardCheck, LogOut, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import TripChat from '@/components/TripChat';
 import BagPacking from '@/components/BagPacking';
 import PrepReminders from '@/components/PrepReminders';
+import NotificationCenter from '@/components/NotificationCenter';
 import { useLanguage } from '@/lib/i18n';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 type ItemStatus = 'Owned' | 'Need to buy' | 'Purchased' | 'Packed';
@@ -33,20 +35,29 @@ const yen = (n:number) => new Intl.NumberFormat('ja-JP',{style:'currency',curren
 function weatherLabel(code:number,translate:(text:string)=>string){ if(code===0)return translate('Clear'); if([1,2,3].includes(code))return translate('Partly cloudy'); if([45,48].includes(code))return translate('Fog'); if(code>=51&&code<=67)return translate('Rain'); if(code>=71&&code<=77)return translate('Snow'); if(code>=80&&code<=82)return translate('Rain showers'); if(code>=95)return translate('Thunderstorm'); return translate('Mixed'); }
 export default function Home(){
  const {language,setLanguage,t:tr}=useLanguage();
+ const router=useRouter();
+ const skipAnonymousSignIn=useRef(false);
+ const [sidebarCollapsed,setSidebarCollapsed]=useState(false);
+ const [loggingOut,setLoggingOut]=useState(false);
  const [workspace,setWorkspace]=useState<Workspace>(seed); const [ready,setReady]=useState(false); const [user,setUser]=useState<User|null>(null); const [remoteLoaded,setRemoteLoaded]=useState(false); const [remoteError,setRemoteError]=useState(false); const [tab,setTab]=useState('Overview'); const [newName,setNewName]=useState(''); const [newType,setNewType]=useState('Camping'); const [newLocation,setNewLocation]=useState('Osaka, Japan'); const [newStart,setNewStart]=useState(new Date(Date.now()+7*86400000).toISOString().slice(0,10)); const [newEnd,setNewEnd]=useState(new Date(Date.now()+9*86400000).toISOString().slice(0,10)); const [newBudget,setNewBudget]=useState('15000'); const [itemName,setItemName]=useState(''); const [memberName,setMemberName]=useState(''); const [expenseName,setExpenseName]=useState(''); const [expenseAmount,setExpenseAmount]=useState(''); const [expensePayer,setExpensePayer]=useState(''); const [weather,setWeather]=useState<any>(null); const [weatherLoading,setWeatherLoading]=useState(false); const [advice,setAdvice]=useState<any>(null); const [adviceLoading,setAdviceLoading]=useState(false); const [notice,setNotice]=useState('');
  const active=workspace.trips.find(t=>t.id===workspace.activeTripId) || workspace.trips[0];
  const updateTrip=(fn:(trip:Trip)=>Trip)=>setWorkspace(w=>({...w,trips:w.trips.map(t=>t.id===w.activeTripId?fn(t):t)}));
+ const toggleSidebar=()=>setSidebarCollapsed(current=>{const next=!current;try{localStorage.setItem('motteku-sidebar-collapsed',String(next));}catch{}return next;});
+ const handleLogout=async()=>{if(loggingOut)return;setLoggingOut(true);skipAnonymousSignIn.current=true;try{if(auth)await signOut(auth);router.replace('/login');}catch{skipAnonymousSignIn.current=false;setLoggingOut(false);setNotice(tr('Could not log out. Please try again.'));}};
+ useEffect(()=>{try{setSidebarCollapsed(localStorage.getItem('motteku-sidebar-collapsed')==='true');}catch{}},[]);
  useEffect(()=>{
    if(!firebaseConfigured || !auth || !db){try{const saved=localStorage.getItem('motteku-workspace');if(saved){const parsed=normalizeWorkspace(JSON.parse(saved));if(parsed.trips?.length)setWorkspace(parsed);}}catch{}setReady(true);return;}
-   const unsubscribe=onAuthStateChanged(auth, u=>{setUser(u);if(!u)signInAnonymously(auth!).catch(e=>{console.error(e);setNotice('Firebase sign-in failed. Check that Anonymous Authentication is enabled.');setReady(true);});});
+   const unsubscribe=onAuthStateChanged(auth, u=>{setUser(u);if(!u&&!skipAnonymousSignIn.current)signInAnonymously(auth!).catch(e=>{console.error(e);setNotice('Firebase sign-in failed. Check that Anonymous Authentication is enabled.');setReady(true);});});
    return ()=>unsubscribe();
  },[]);
+
  useEffect(()=>{
    if(!firebaseConfigured || !db || !user)return;
    const ref=doc(db,'users',user.uid,'workspace','main');
    const unsubscribe=onSnapshot(ref,snap=>{if(snap.exists()){const data=normalizeWorkspace(snap.data());if(data.trips?.length)setWorkspace(data);}setRemoteLoaded(true);setReady(true);},()=>{try{const saved=localStorage.getItem('motteku-workspace');if(saved){const parsed=normalizeWorkspace(JSON.parse(saved));if(parsed.trips?.length)setWorkspace(parsed);}}catch{}setRemoteError(true);setNotice('Firebase access was denied. Using local demo mode; publish firestore.rules in the matching Firebase project to restore cloud sync.');setRemoteLoaded(true);setReady(true);});
    return ()=>unsubscribe();
  },[user]);
+
  useEffect(()=>{if(!ready)return;if(firebaseConfigured&&db&&user&&!remoteError){if(!remoteLoaded)return;const ref=doc(db,'users',user.uid,'workspace','main');setDoc(ref,workspace,{merge:true}).catch(()=>{setRemoteError(true);setNotice('Firebase access was denied. Using local demo mode; publish firestore.rules in the matching Firebase project to restore cloud sync.');});}else{try{localStorage.setItem('motteku-workspace',JSON.stringify(workspace));}catch{}}},[workspace,ready,user,remoteLoaded,remoteError]);
  const expenses=active?.expenses||[];
  const stats=useMemo(()=>{if(!active)return {total:0,packed:0,need:0,weight:0,spent:0};return {total:active.items.length,packed:active.items.filter(i=>i.status==='Packed').length,need:active.items.filter(i=>i.status==='Need to buy').length,weight:active.items.reduce((s,i)=>s+(Number(i.weight)||0),0),spent:active.items.reduce((s,i)=>s+((['Purchased','Packed'].includes(i.status)?Number(i.price)||0:0)),0)}},[active]);
@@ -62,8 +73,15 @@ export default function Home(){
  const nav=[['Overview',CalendarDays],['Packing list',ListChecks],['Bags & photos',ClipboardCheck],['Group chat',MessageCircle],['Reminders',CalendarDays],['Members',Users],['Budget',Wallet],['Weather & AI',CloudSun],['History',History]] as const;
  if(!ready)return <main className="loading"><LoaderCircle className="spin" size={28}/> {tr('Loading Motteku…')}</main>;
   return <main className="app-shell">
-  <aside className="sidebar"><div className="brand"><div className="brand-mark"><TentTree size={25}/></div><div><b>Motteku</b><small>{tr("Pack together, go further")}</small></div></div><div className="workspace-label">{tr("WORKSPACE")}</div><nav>{nav.map(([label,Icon])=><button key={label} className={`nav-item ${tab===label?'selected':''}`} onClick={()=>setTab(label)}><Icon size={18}/><span>{tr(label)}</span>{label==='Packing list'&&active&&<em>{active.items.length}</em>}</button>)}</nav><div className="sidebar-bottom"><div className="sync-dot"/><span>{tr(firebaseConfigured&&user&&!remoteError?'Firebase connected mode':'Local demo mode')}</span><small>{tr(firebaseConfigured&&user&&!remoteError?'Changes sync to Firestore':'Data saved in this browser')}</small></div></aside>
-   <section className="main-area"><header className="topbar"><div><div className="eyebrow">{tr("YOUR NEXT ADVENTURE STARTS HERE")}</div><h1>{tr(tab==='Overview'?'Trip overview':tab==='Packing list'?'Packing checklist':tab==='Bags & photos'?'Bags & item locations':tab==='Group chat'?'Trip group chat':tab==='Reminders'?'Preparation reminders':tab==='Members'?'Your travel crew':tab==='Budget'?'Budget & expenses':tab==='Weather & AI'?'Weather & smart advice':'Trip history')}</h1></div><div className="top-actions"><Link className="auth-link" href="/login">{tr("Log in")}</Link><select aria-label={tr("Select trip")} value={active?.id||''} onChange={e=>setWorkspace(w=>({...w,activeTripId:e.target.value}))}>{workspace.trips.length?workspace.trips.map(t=><option key={t.id} value={t.id}>{t.name}</option>):<option value="">{tr("No active trip")}</option>}</select><select className="language-select" aria-label={tr('Language')} value={language} onChange={e=>setLanguage(e.target.value as 'ja'|'en')}><option value="ja">{tr('Japanese')}</option><option value="en">{tr('English')}</option></select><button className="primary small" onClick={()=>document.getElementById('create-trip')?.scrollIntoView({behavior:'smooth'})}><Plus size={16}/> {tr("New trip")}</button></div></header>
+  <aside className={sidebarCollapsed?'sidebar sidebar-collapsed':'sidebar'}>
+    <div className="sidebar-header">
+      <div className="brand"><div className="brand-mark"><TentTree size={25}/><button className="sidebar-toggle" type="button" onClick={toggleSidebar} title={tr(sidebarCollapsed?'Expand sidebar':'Collapse sidebar')} aria-label={tr(sidebarCollapsed?'Expand sidebar':'Collapse sidebar')} aria-expanded={!sidebarCollapsed} aria-controls="workspace-navigation">
+        {sidebarCollapsed?<PanelLeftOpen size={18}/>:<PanelLeftClose size={18}/>}
+      </button></div><div className="brand-copy"><b>Motteku</b><small>{tr("Pack together, go further")}</small></div></div>
+    </div>
+    <div className="sidebar-scroll">
+      <div className="workspace-label">{tr("WORKSPACE")}</div><nav id="workspace-navigation" aria-label={tr("WORKSPACE")}>{nav.map(([label,Icon])=><button key={label} className={`nav-item ${tab===label?'selected':''}`} title={tr(label)} aria-current={tab===label?'page':undefined} onClick={()=>setTab(label)}><Icon size={18}/><span>{tr(label)}</span>{label==='Packing list'&&active&&<em>{active.items.length}</em>}</button>)}</nav></div><div className="sidebar-footer"><div className="sidebar-bottom"><div className="sync-dot"/><span>{tr(firebaseConfigured&&user&&!remoteError?'Firebase connected mode':'Local demo mode')}</span><small>{tr(firebaseConfigured&&user&&!remoteError?'Changes sync to Firestore':'Data saved in this browser')}</small></div><button className="logout-button" type="button" onClick={handleLogout} disabled={loggingOut} title={tr(loggingOut?'Signing out…':'Log out')} aria-label={tr(loggingOut?'Signing out…':'Log out')}><LogOut size={18}/><span>{tr(loggingOut?'Signing out…':'Log out')}</span></button></div></aside>
+   <section className="main-area"><header className="topbar"><div><div className="eyebrow">{tr("YOUR NEXT ADVENTURE STARTS HERE")}</div><h1>{tr(tab==='Overview'?'Trip overview':tab==='Packing list'?'Packing checklist':tab==='Bags & photos'?'Bags & item locations':tab==='Group chat'?'Trip group chat':tab==='Reminders'?'Preparation reminders':tab==='Members'?'Your travel crew':tab==='Budget'?'Budget & expenses':tab==='Weather & AI'?'Weather & smart advice':'Trip history')}</h1></div><div className="top-actions"><NotificationCenter trips={workspace.trips} accountId={user?.uid||'local'} onOpen={(tripId,nextTab)=>{setWorkspace(w=>({...w,activeTripId:tripId}));setTab(nextTab);}}/><Link className="auth-link" href="/login">{tr("Log in")}</Link><select aria-label={tr("Select trip")} value={active?.id||''} onChange={e=>setWorkspace(w=>({...w,activeTripId:e.target.value}))}>{workspace.trips.length?workspace.trips.map(t=><option key={t.id} value={t.id}>{t.name}</option>):<option value="">{tr("No active trip")}</option>}</select><select className="language-select" aria-label={tr('Language')} value={language} onChange={e=>setLanguage(e.target.value as 'ja'|'en')}><option value="ja">{tr('Japanese')}</option><option value="en">{tr('English')}</option></select><button className="primary small" onClick={()=>document.getElementById('create-trip')?.scrollIntoView({behavior:'smooth'})}><Plus size={16}/> {tr("New trip")}</button></div></header>
   {notice&&<div className="notice"><span>{notice}</span><button onClick={()=>setNotice('')} aria-label={tr("Dismiss")}><X size={16}/></button></div>}
   {!active&&tab!=='History'?<section className="empty-state"><TentTree size={42}/><h2>{tr("Ready to plan your next trip?")}</h2><p>{tr("Create a trip below to start your packing list.")}</p></section>:active&&<>
   {tab==='Overview'&&<>
