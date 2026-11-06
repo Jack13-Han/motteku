@@ -14,6 +14,7 @@ import {
 import { ArrowLeft, CheckCircle2, LockKeyhole, Mail, UserRound } from 'lucide-react';
 import { auth, firebaseConfigured } from '@/lib/firebase';
 import { useLanguage } from '@/lib/i18n';
+import { safeReturnPath } from '@/lib/trips';
 
 type AuthFormProps = { mode: 'login' | 'register' };
 
@@ -36,7 +37,7 @@ function authErrorMessage(error: unknown) {
 
 export default function AuthForm({ mode }: AuthFormProps) {
   const router = useRouter();
-  const { language, t } = useLanguage();
+  const { language, setLanguage, t } = useLanguage();
   const isRegister = mode === 'register';
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -44,11 +45,14 @@ export default function AuthForm({ mode }: AuthFormProps) {
   const [authReady, setAuthReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [returnTo, setReturnTo] = useState('/');
   const [success, setSuccess] = useState(false);
   const [profileWarning, setProfileWarning] = useState('');
   const submittingRef = useRef(false);
 
   useEffect(() => {
+    const destination = safeReturnPath(new URLSearchParams(window.location.search).get('next'));
+    setReturnTo(destination);
     if (!firebaseConfigured || !auth) {
       setAuthReady(true);
       setError('Firebase Authentication is not configured. Check your Firebase project settings.');
@@ -57,15 +61,15 @@ export default function AuthForm({ mode }: AuthFormProps) {
     return onAuthStateChanged(auth, (currentUser) => {
       setAuthReady(true);
       // Let the active submission finish saving the profile and showing success.
-      if (currentUser && !currentUser.isAnonymous && !submittingRef.current) router.replace('/');
+      if (currentUser && !currentUser.isAnonymous && !submittingRef.current) router.replace(destination);
     });
   }, [router]);
 
   useEffect(() => {
     if (!success) return;
-    const timer = window.setTimeout(() => router.replace('/'), 1200);
+    const timer = window.setTimeout(() => router.replace(returnTo), 1200);
     return () => window.clearTimeout(timer);
-  }, [success, router]);
+  }, [success, router, returnTo]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -101,6 +105,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
       submittingRef.current = false;
       setError(authErrorMessage(submitError));
     } finally {
+      submittingRef.current = false;
       setBusy(false);
     }
   }
@@ -113,6 +118,9 @@ export default function AuthForm({ mode }: AuthFormProps) {
   return (
     <main className="auth-page">
       <section className="auth-card" aria-labelledby="auth-title">
+        <select aria-label={t('Language')} value={language} onChange={event => setLanguage(event.target.value as 'ja' | 'en')}>
+          <option value="ja">{t('Japanese')}</option><option value="en">{t('English')}</option>
+        </select>
         <Link className="auth-back" href="/" aria-label={t('Back to Motteku')}>
           <ArrowLeft size={16} /> {t('Back to Motteku')}
         </Link>
@@ -131,7 +139,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
           <h2 className="auth-success-title">{t(isRegister ? 'Account created successfully!' : 'Signed in successfully!')}</h2>
           <p className="auth-success-message">{t('You are signed in. Opening Motteku…')}</p>
           {profileWarning && <p className="auth-profile-warning">{t(profileWarning)}</p>}
-          <button type="button" className="primary auth-submit" onClick={() => router.replace('/')}>{t('Continue to Motteku')}</button>
+          <button type="button" className="primary auth-submit" onClick={() => router.replace(returnTo)}>{t('Continue to Motteku')}</button>
         </div> : <form className="auth-form" onSubmit={handleSubmit} aria-busy={busy}>
           {isRegister && (
             <label>
@@ -155,7 +163,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
 
         {!success && <p className="auth-switch">
           {isRegister ? t('Already have an account?') : t("Don't have an account?")}{' '}
-          <Link href={isRegister ? '/login' : '/register'}>{t(isRegister ? 'Log in' : 'Register')}</Link>
+          <Link href={`${isRegister ? '/login' : '/register'}${returnTo !== '/' ? `?next=${encodeURIComponent(returnTo)}` : ''}`}>{t(isRegister ? 'Log in' : 'Register')}</Link>
         </p>}
         {language === 'ja' && <p className="auth-note">{t('Your group trip data stays in your account.')}</p>}
       </section>
