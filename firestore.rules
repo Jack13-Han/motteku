@@ -1,36 +1,71 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isTripMember(tripId) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/sharedTrips/$(tripId)/members/$(request.auth.uid));
+    }
+
+    function validChatMessage(tripId, messageId) {
+      let message = request.resource.data;
+      let imagePath = message.get('imagePath', '');
+      let imageName = message.get('imageName', '');
+      let ownImagePath = 'sharedTrips/' + tripId + '/chat/' + request.auth.uid + '/' + messageId + '.jpg';
+      return message.keys().hasAll(['senderUid', 'senderName', 'text', 'createdAt'])
+        && message.keys().hasOnly(['senderUid', 'senderName', 'text', 'createdAt', 'imagePath', 'imageName'])
+        && message.senderUid == request.auth.uid
+        && message.senderName is string
+        && message.senderName.size() > 0
+        && message.senderName.size() <= 80
+        && message.text is string
+        && message.text.size() <= 2000
+        && message.createdAt is timestamp
+        && message.createdAt == request.time
+        && imagePath is string
+        && (imagePath == '' || imagePath == ownImagePath)
+        && imageName is string
+        && imageName.size() <= 120
+        && (imagePath != '' || imageName == '')
+        && (message.text.size() > 0 || imagePath != '');
+    }
+
     match /users/{userId}/workspace/{docId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
+
     match /sharedTrips/{tripId} {
       allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.inviteCode is string;
-      allow read: if request.auth != null
-        && exists(/databases/$(database)/documents/sharedTrips/$(tripId)/members/$(request.auth.uid));
-      allow update: if request.auth != null
-        && exists(/databases/$(database)/documents/sharedTrips/$(tripId)/members/$(request.auth.uid))
+      allow read: if isTripMember(tripId);
+      allow update: if isTripMember(tripId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bagPlan']);
       allow delete: if false;
+
       match /members/{memberId} {
-        allow read: if request.auth != null
-          && exists(/databases/$(database)/documents/sharedTrips/$(tripId)/members/$(request.auth.uid));
+        // A recipient can check their own membership before accepting an invite.
+        // This does not grant access to the room or its member list before joining.
+        allow get: if request.auth != null
+          && (request.auth.uid == memberId || isTripMember(tripId));
+        allow list: if isTripMember(tripId);
         allow create: if request.auth != null && request.auth.uid == memberId
+          && request.resource.data.keys().hasAll(['uid', 'name', 'inviteCode', 'joinedAt'])
+          && request.resource.data.keys().hasOnly(['uid', 'name', 'inviteCode', 'joinedAt'])
           && request.resource.data.uid == request.auth.uid
-          && request.resource.data.inviteCode == get(/databases/$(database)/documents/sharedTrips/$(tripId)).data.inviteCode;
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 80
+          && request.resource.data.inviteCode is string
+          && request.resource.data.inviteCode == get(/databases/$(database)/documents/sharedTrips/$(tripId)).data.inviteCode
+          && request.resource.data.joinedAt is timestamp
+          && request.resource.data.joinedAt == request.time;
         allow update, delete: if request.auth != null
           && request.auth.uid == get(/databases/$(database)/documents/sharedTrips/$(tripId)).data.ownerUid;
       }
+
       match /messages/{messageId} {
-        allow read: if request.auth != null
-          && exists(/databases/$(database)/documents/sharedTrips/$(tripId)/members/$(request.auth.uid));
-        allow create: if request.auth != null
-          && exists(/databases/$(database)/documents/sharedTrips/$(tripId)/members/$(request.auth.uid))
-          && request.resource.data.senderUid == request.auth.uid
-          && request.resource.data.text is string
-          && request.resource.data.text.size() > 0
-          && request.resource.data.text.size() <= 2000;
+        // Existing text messages remain readable; schema validation applies to new writes.
+        allow read: if isTripMember(tripId);
+        allow create: if isTripMember(tripId) && validChatMessage(tripId, messageId);
         allow update, delete: if false;
       }
     }
