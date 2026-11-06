@@ -36,7 +36,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
-import TripChat from "@/components/TripChat";
+import TripChat, { parseChatInvitation } from "@/components/TripChat";
 import BagPacking from "@/components/BagPacking";
 import PrepReminders from "@/components/PrepReminders";
 import NotificationCenter from "@/components/NotificationCenter";
@@ -287,6 +287,21 @@ export default function Home() {
         localStorage.getItem("motteku-sidebar-collapsed") === "true",
       );
     } catch {}
+  }, []);
+  useEffect(() => {
+    const incoming = parseChatInvitation(window.location.href);
+    let pending = incoming;
+    try {
+      if (incoming) {
+        sessionStorage.setItem("motteku-pending-chat-invite", JSON.stringify(incoming));
+      } else {
+        const saved = JSON.parse(sessionStorage.getItem("motteku-pending-chat-invite") || "null");
+        if (saved && typeof saved.roomId === "string" && typeof saved.code === "string") {
+          pending = parseChatInvitation(`${window.location.origin}/?joinChat=${encodeURIComponent(saved.roomId)}&inviteCode=${encodeURIComponent(saved.code)}`);
+        }
+      }
+    } catch {}
+    if (pending) setTab("Group chat");
   }, []);
   useEffect(() => {
     if (!firebaseConfigured || !auth || !db) {
@@ -560,6 +575,28 @@ export default function Home() {
     }));
     setNotice("Trip moved to history.");
   };
+  const handleJoinedChat = (roomId: string, code: string, roomName: string) => {
+    setWorkspace((current) => {
+      const existing = current.trips.find((trip) => trip.sharedChatId === roomId);
+      if (existing) {
+        return {
+          ...current,
+          activeTripId: existing.id,
+          trips: current.trips.map((trip) => trip.id === existing.id ? { ...trip, inviteCode: code } : trip),
+        };
+      }
+      const joinedTrip: Trip = {
+        id: uid(), name: roomName || tr("Shared group"), type: "Shared trip",
+        location: "", startDate: "", endDate: "", prepStartDate: "",
+        people: 1, budget: 0,
+        members: [{ id: user?.uid || uid(), name: user?.displayName || user?.email?.split("@")[0] || "Me" }],
+        items: [], expenses: [], bags: [], sharedChatId: roomId, inviteCode: code,
+        createdAt: new Date().toISOString(),
+      };
+      return { ...current, trips: [joinedTrip, ...current.trips], activeTripId: joinedTrip.id };
+    });
+    setTab("Group chat");
+  };
   const nav = [
     ["Overview", CalendarDays],
     ["Packing list", ListChecks],
@@ -750,7 +787,7 @@ export default function Home() {
             </button>
           </div>
         )}
-        {!active && tab !== "History" ? (
+        {!active && tab !== "History" && tab !== "Group chat" ? (
           <section className="empty-state">
             <TentTree size={42} />
             <h2>{tr("Ready to plan your next trip?")}</h2>
@@ -1211,23 +1248,6 @@ export default function Home() {
                             }
                           : i;
                       }),
-                    }))
-                  }
-                  onNotice={setNotice}
-                />
-              )}
-              {tab === "Group chat" && (
-                <TripChat
-                  tripId={active.id}
-                  chatId={active.sharedChatId}
-                  inviteCode={active.inviteCode}
-                  userUid={user?.uid}
-                  tripName={active.name}
-                  onRoomChange={(id, code) =>
-                    updateTrip((t) => ({
-                      ...t,
-                      sharedChatId: id,
-                      inviteCode: code,
                     }))
                   }
                   onNotice={setNotice}
@@ -1716,6 +1736,25 @@ export default function Home() {
               )}
             </>
           )
+        )}
+        {tab === "Group chat" && (
+          <TripChat
+            tripId={active?.id || ""}
+            chatId={active?.sharedChatId}
+            inviteCode={active?.inviteCode}
+            userUid={user?.uid}
+            userName={user?.displayName || user?.email?.split("@")[0] || ""}
+            tripName={active?.name || tr("Shared group")}
+            onRoomChange={(id, code) => {
+              if (!active) return;
+              setWorkspace((current) => ({
+                ...current,
+                trips: current.trips.map((trip) => trip.id === active.id ? { ...trip, sharedChatId: id, inviteCode: code } : trip),
+              }));
+            }}
+            onJoinedRoom={handleJoinedChat}
+            onNotice={setNotice}
+          />
         )}
         {tab === "History" && (
           <section className="panel page-panel">
