@@ -2,6 +2,28 @@ import { extraJa } from './messages-extra';
 import { tripMessages } from './messages-trips';
 export type Language = 'ja' | 'en';
 const baseJa: Record<string, string> = {
+  'You': 'あなた',
+  'Personal items': '個人用の持ち物',
+  'Shared items': '共有用の持ち物',
+  'Each member prepares their own items': 'メンバーが一人ずつ準備するもの',
+  'Items shared by the group': 'グループ全体で使用するもの',
+  'Ready progress': '準備済み',
+  'Packed progress': 'バッグに収納済み',
+  '{count} of {total} members': '{count} / {total}人',
+  '{count} of {total} units': '{count} / {total}個',
+  'Showing {count} of {total} items': '{total}件中{count}件を表示',
+  '{count} items · {complete} complete': '{count}件・{complete}件完了',
+  'Select bag': 'バッグを選択',
+  'Everyone is ready!': '全員の準備が完了しました！',
+  'Everyone has packed this item': '全員がバッグに入れました',
+  '{count} members are not ready': '{count}人がまだ準備していません',
+  '{count} units are not ready': '{count}個がまだ準備されていません',
+  '{count} members have not packed this item': '{count}人がまだバッグに入れていません',
+  '{count} units have not been packed': '{count}個がまだバッグに入っていません',
+  'No unpacked items.': '未収納のアイテムはありません。',
+  'Delete {name}?': '{name}を削除しますか？',
+  'Member preparation statuses will also be deleted.': 'メンバーごとの準備状況も削除されます。',
+
   'Pack together, go further': 'みんなで準備して、もっと遠くへ', WORKSPACE: 'ワークスペース',
   'Overview': '概要', 'Packing list': '持ち物リスト', 'Bags & photos': 'バッグ・写真', 'Group chat': 'グループチャット', Reminders: 'リマインダー', Members: 'メンバー', Budget: '予算', 'Weather & AI': '天気・AI', History: '履歴',
   'Firebase connected mode': 'Firebase 接続中', 'Local demo mode': 'ローカルデモモード', 'Changes sync to Firestore': '変更は Firestore に同期されます', 'Data saved in this browser': 'データはこのブラウザーに保存されます',

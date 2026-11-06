@@ -7,8 +7,9 @@ import { collection, doc, getDocs, serverTimestamp, Timestamp } from 'firebase/f
 import { db, firebaseConfigured } from '@/lib/firebase';
 import type { usePacking } from '@/lib/usePacking';
 import { packingTemplates } from '@/lib/packingTemplates';
+import PackingCards from './PackingCards';
 import MemberRemovalDialog from './MemberRemovalDialog';
-import { canEditAssignment, createPackingItem, isCurrentAssignment, packingItemName, packingProgress, reconcilePacking, STATUS_LABELS, type ItemAssignment, type ItemStatus, type PackingBag, type Registration, type TripItem } from '@/lib/packing';
+import { canEditAssignment, createPackingItem, reconcilePacking, STATUS_LABELS, type ItemAssignment, type ItemStatus, type PackingBag, type Registration, type TripItem } from '@/lib/packing';
 
 type Props = {
   managed?: boolean;
@@ -26,7 +27,7 @@ const emptyUnit = () => ({ memberId: '', status: 'not_ready' as ItemStatus, bagI
 const initialForm = (): Registration => ({ name: '', type: 'personal', targetMemberIds: [], units: [emptyUnit()], status: 'not_ready', bagId: '' });
 
 export default function TripPacking({ tripId, tripType, packing, managed = false, readOnly = false, roomId = '', userUid, members, bags, legacyItems }: Props) {
-  const { t, language } = useLanguage();
+  const { t } = useLanguage();
   const uid = userUid || (firebaseConfigured ? '' : 'local-owner');
   const scope = managed ? tripId : roomId || `${uid}_${tripId}`;
   const { data, error, setError, busy, loaded, roomMembers, cloud, mutate, commitPlan } = packing;
@@ -38,7 +39,6 @@ export default function TripPacking({ tripId, tripType, packing, managed = false
   const disabled = busy || !loaded || readOnly;
   const roster = data?.members.filter(m => m.active !== false) || [];
   const packingBags = data?.bags || [];
-  const memberName = (id: string) => data?.members.find(m => m.id === id)?.name || t("Not selected");
   const statusOptions = Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{t(label)}</option>);
   const memberOptions = roster.map(m => <option key={m.id} value={m.id}>{m.name}</option>);
   const bagOptions = <><option value="">{t("Not selected")}</option>{packingBags.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</>;
@@ -180,46 +180,13 @@ export default function TripPacking({ tripId, tripType, packing, managed = false
           <div className="bottom-actions"><button className="primary" type="submit" disabled={!roster.length}>{t("Add item")}</button><button className="soft-button" type="button" onClick={() => { setForm(initialForm()); setAll(true); }}>{t("Clear input")}</button></div>
         </fieldset>
       </form>}
-      <label className="packing-check"><input type="checkbox" checked={onlyNotReady} onChange={e => setOnlyNotReady(e.target.checked)}/>{t("Show unpacked items only")}</label>
-      <div aria-live="polite" className="packing-item-list">
-        {data.items.length === 0 && <p className="empty-inline">{t("No items yet.")}</p>}
-        {(['personal', 'shared'] as const).map(type => <section key={type}><h3>{t(type === 'personal' ? 'Personal' : 'Shared')}</h3>{data.items.filter(item => item.type === type).map(item => {
-          const progress = packingProgress(item, data.assignments);
-          const allRows = data.assignments.filter(a => a.itemId === item.id).sort((a, b) => (a.unitNumber || 0) - (b.unitNumber || 0));
-          const rows = allRows.filter(a => isCurrentAssignment(item, a));
-          const retained = allRows.filter(a => !isCurrentAssignment(item, a));
-          const displayName = packingItemName(item, t);
-          if (onlyNotReady && progress.allPacked) return null;
-          return <article className="packing-item" key={item.id}>
-            <div className="packing-item-heading"><h4>{displayName}</h4><span className={`packing-badge ${item.type}`}>{t(item.type === 'personal' ? "Personal" : "Shared")}</span>
-              {admin && <button className="soft-button" disabled={disabled} onClick={() => {
-                void mutate(current => ({ ...current, items: current.items.filter(i => i.id !== item.id), assignments: current.assignments.filter(a => a.itemId !== item.id) }), (batch, parent) => {
-                  batch.delete(doc(parent, 'items', item.id));
-                  allRows.forEach(a => batch.delete(doc(parent, 'itemAssignments', a.id)));
-                });
-              }}>{t("Remove")}</button>}
-            </div>
-            {item.template && <p>{t('Required quantity: {count} {unit}', { count: item.quantity, unit: t(item.template.unitKey) })}{item.type === 'personal' && <> · {t('Per member: {count} {unit}', { count: item.template.quantityPerPerson || 1, unit: t(item.template.unitKey) })}</>}</p>}
-            {item.type === 'personal' ? <>
-              <p><strong>{t("Ready: {ready} of {total}", { ready: progress.ready, total: progress.total })}</strong> / {t("Packed: {packed} of {total}", { packed: progress.packed, total: progress.total })}</p>
-              {progress.allPacked && <strong className="text-green">{t("Everyone is packed")}</strong>}
-              <p>{t("Not ready members")}: {progress.notReadyMemberIds.map(memberName).join(language === "ja" ? "、" : ", ") || t("None")}</p>
-              <p>{t("Unpacked members")}: {progress.notPackedMemberIds.map(memberName).join(language === "ja" ? "、" : ", ") || t("None")}</p>
-            </> : <>
-              <p>{item.template ? <>{t('Ready: {ready} of {total} {unit}', { ready: progress.ready, total: progress.total, unit: t(item.template.unitKey) })} / {t('Packed: {packed} of {total} {unit}', { packed: progress.packed, total: progress.total, unit: t(item.template.unitKey) })}</> : <>{t("Units ready: {ready} of {total}", { ready: progress.ready, total: progress.total })} / {t("Packed: {packed} of {total}", { packed: progress.packed, total: progress.total })} / {t("Required: {count}", { count: item.quantity })}</>}</p>
-              {progress.allPacked && <strong className="text-green">{t("All units packed")}</strong>}
-            </>}
-            {rows.map(a => <div className="packing-assignment" key={a.id}>
-              <b>{item.type === 'personal' ? memberName(a.memberId) : `${displayName} — ${t("Unit {number}", { number: a.unitNumber || 1 })}`}</b>
-              {item.type === 'shared' && <label>{t("Assignee")}<select aria-label={`${displayName} ${a.unitNumber} ${t("Assignee")}`} disabled={disabled || !admin} value={a.memberId} onChange={e => updateAssignment(a, { memberId: e.target.value })}><option value="">{t('Unassigned')}</option>{!roster.some(m => m.id === a.memberId) && a.memberId && <option value={a.memberId} disabled>{memberName(a.memberId)} ({t('Former member')})</option>}{memberOptions}</select></label>}
-              <label>{t("Status")}<select aria-label={`${displayName} ${memberName(a.memberId)} ${a.unitNumber || ''} ${t("Status")}`} disabled={disabled || !canEditAssignment(data, uid, a)} value={a.status} onChange={e => updateAssignment(a, { status: e.target.value as ItemStatus })}>{statusOptions}</select></label>
-              <label>{t("Bag")}<select aria-label={`${displayName} ${memberName(a.memberId)} ${a.unitNumber || ''} ${t("Bag")}`} disabled={disabled || !canEditAssignment(data, uid, a)} value={a.bagId || ''} onChange={e => updateAssignment(a, { bagId: e.target.value })}>{bagOptions}{a.bagId && !packingBags.some(b => b.id === a.bagId) && <option value={a.bagId}>{t("Deleted bag")}</option>}</select></label>
-              <small>{memberName(a.memberId)} ／ {packingBags.find(b => b.id === a.bagId)?.name || t(a.bagId ? "Deleted bag" : "Bag not selected")}</small>
-            </div>)}
-            {retained.length > 0 && <details><summary>{t('Retained history: {count}', { count: retained.length })}</summary>{retained.map(a => <p key={a.id}>{a.unitNumber ? t('Unit {number}', { number: a.unitNumber }) : memberName(a.memberId)} · {memberName(a.memberId)} · {t(STATUS_LABELS[a.status])} · {packingBags.find(b => b.id === a.bagId)?.name || t('Bag not selected')}</p>)}</details>}
-          </article>;
-        })}</section>)}
-      </div>
+      <PackingCards data={data} uid={uid} admin={admin} disabled={disabled} onlyUnpacked={onlyNotReady} onFilter={setOnlyNotReady} onUpdate={updateAssignment} onDelete={item => {
+        const allRows = data.assignments.filter(a => a.itemId === item.id);
+        return mutate(current => ({ ...current, items: current.items.filter(i => i.id !== item.id), assignments: current.assignments.filter(a => a.itemId !== item.id) }), (batch, parent) => {
+          batch.delete(doc(parent, 'items', item.id));
+          allRows.forEach(a => batch.delete(doc(parent, 'itemAssignments', a.id)));
+        });
+      }}/>
       {admin && legacyItems.length > 0 && <details className="packing-settings"><summary>{t("Import legacy checklist")}</summary><p>{t("Copies up to 3 assigned legacy items as shared items without changing the original list. Register personal items above. Previously imported items are skipped.")}</p><button className="soft-button" disabled={disabled || legacyItems.every(i => data.items.some(item => item.id === `legacy-${i.id}`))} onClick={importLegacy}>{t("Copy next 3 items")}</button></details>}
     </>}
   </section>;
