@@ -524,33 +524,6 @@ export default function Home() {
       setAdviceLoading(false);
     }
   };
-  const copyTrip = () => {
-    const copy = {
-      ...active,
-      id: uid(),
-      name: `${active.name} (Copy)`,
-      createdAt: new Date().toISOString(),
-      bags: [],
-      sharedChatId: "",
-      inviteCode: "",
-      items: active.items.map((i) => ({
-        ...i,
-        id: uid(),
-        status: "Need to buy" as ItemStatus,
-        paidBy: "",
-        comment: "",
-        bagId: "",
-        bagLocation: "",
-      })),
-    };
-    setWorkspace((w) => ({
-      ...w,
-      trips: [copy, ...w.trips],
-      activeTripId: copy.id,
-      history: [active, ...w.history],
-    }));
-    setNotice("Trip copied. Item statuses reset for the new trip.");
-  };
   const finishTrip = () => {
     setWorkspace((w) => ({
       ...w,
@@ -783,9 +756,6 @@ export default function Home() {
                           onClick={() => setTab("Packing list")}
                         >
                           <ListChecks size={16} /> {tr("Open checklist")}
-                        </button>
-                        <button className="outline-button" onClick={copyTrip}>
-                          <Copy size={16} /> {tr("Copy trip")}
                         </button>
                       </div>
                     </div>
