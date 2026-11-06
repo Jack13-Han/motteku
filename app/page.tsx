@@ -138,6 +138,12 @@ const templates: Record<string, string[]> = {
   ],
 };
 const uid = () => Math.random().toString(36).slice(2, 10);
+const localDateString = (date = new Date()) => {
+  const localDate = new Date(
+    date.getTime() - date.getTimezoneOffset() * 60_000,
+  );
+  return localDate.toISOString().slice(0, 10);
+};
 const newItem = (name: string, category = "General"): Item => ({
   id: uid(),
   name,
@@ -252,9 +258,15 @@ export default function Home() {
   const [advice, setAdvice] = useState<any>(null);
   const [adviceLoading, setAdviceLoading] = useState(false);
   const [notice, setNotice] = useState("");
+  const workspaceRef = useRef(workspace);
+  useEffect(() => {
+    workspaceRef.current = workspace;
+  }, [workspace]);
   const active =
     workspace.trips.find((t) => t.id === workspace.activeTripId) ||
     workspace.trips[0];
+  const minTripDate = localDateString();
+  const minEndDate = newStart > minTripDate ? newStart : minTripDate;
   const updateTrip = (fn: (trip: Trip) => Trip) =>
     setWorkspace((w) => ({
       ...w,
@@ -397,10 +409,32 @@ export default function Home() {
     };
   }, [active]);
   const addTrip = () => {
+    const type = newType.trim();
+    if (!type) return;
+    const today = localDateString();
+    if (newStart < today) {
+      setNotice("Start date must be today or later.");
+      return;
+    }
+    if (newEnd < (newStart > today ? newStart : today)) {
+      setNotice("End date must be on or after the start date.");
+      return;
+    }
+    const isCustomType = !templates[type];
+    const starterItems = (
+      templates[type] || [
+        "Water bottle",
+        "Phone and charger",
+        "Wallet / ID",
+        "Weather-appropriate clothing",
+        "Personal medication",
+        "First aid kit",
+      ]
+    ).map((name) => newItem(name, type));
     const trip: Trip = {
       id: uid(),
-      name: newName.trim() || `${newType} trip`,
-      type: newType,
+      name: newName.trim() || `${type} trip`,
+      type,
       location: newLocation,
       startDate: newStart,
       endDate: newEnd,
@@ -408,7 +442,7 @@ export default function Home() {
       people: 1,
       budget: Number(newBudget) || 0,
       members: [{ id: uid(), name: "Me" }],
-      items: (templates[newType] || []).map((n) => newItem(n, newType)),
+      items: starterItems,
       expenses: [],
       bags: [],
       createdAt: new Date().toISOString(),
@@ -421,7 +455,91 @@ export default function Home() {
     setNewName("");
     setTab("Overview");
     setShowCreateTrip(false);
-    setNotice("Trip created with a starter checklist.");
+
+    if (!isCustomType) {
+      setNotice("Trip created with a starter checklist.");
+      return;
+    }
+
+    setNotice("Trip created. Generating checklist…");
+    void (async () => {
+      try {
+        const response = await fetch("/api/advice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode: "checklist",
+            language,
+            trip: {
+              name: newName.trim() || `${type} trip`,
+              type,
+              location: newLocation,
+              startDate: newStart,
+              endDate: newEnd,
+            },
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Checklist generation failed.");
+        if (!data.configured)
+          throw new Error("Gemini is not configured for custom trip checklists.");
+        if (!Array.isArray(data.result?.suggestedItems))
+          throw new Error("The AI did not return a usable checklist.");
+        const itemNames: string[] = data.result.suggestedItems
+          .filter((name: unknown): name is string => typeof name === "string")
+          .map((name: string) => name.trim())
+          .filter(Boolean)
+          .slice(0, 20);
+        if (!itemNames.length)
+          throw new Error("The AI did not return a usable checklist.");
+        const generatedItems = itemNames.map((name) => newItem(name, type));
+        const currentTrip = workspaceRef.current.trips.find(
+          (current) => current.id === trip.id,
+        );
+        const checklistUnchanged = (items: Item[]) =>
+          items.length === starterItems.length &&
+          items.every((item, index) => {
+            const original = starterItems[index];
+            return (
+              item.id === original.id &&
+              item.name === original.name &&
+              item.category === original.category &&
+              item.status === original.status &&
+              item.assignee === original.assignee &&
+              item.weight === original.weight &&
+              item.price === original.price &&
+              item.paidBy === original.paidBy &&
+              item.comment === original.comment &&
+              item.dueDate === original.dueDate &&
+              item.receiptUrl === original.receiptUrl &&
+              item.bagId === original.bagId &&
+              item.bagLocation === original.bagLocation
+            );
+          });
+        const applyGeneratedItems =
+          currentTrip !== undefined && checklistUnchanged(currentTrip.items);
+        setWorkspace((current) => ({
+          ...current,
+          trips: current.trips.map((currentTrip) =>
+            currentTrip.id === trip.id && checklistUnchanged(currentTrip.items)
+              ? { ...currentTrip, items: generatedItems }
+              : currentTrip,
+          ),
+        }));
+        setNotice(
+          applyGeneratedItems
+            ? "Trip created with an AI-generated checklist."
+            : "AI checklist is ready, but your checklist edits were kept.",
+        );
+      } catch (error) {
+        setNotice(
+          error instanceof Error &&
+            error.message === "Gemini is not configured for custom trip checklists."
+            ? "Custom trip types need Gemini configured to generate a checklist."
+            : "Trip created, but its AI checklist could not be generated. You can still add items manually.",
+        );
+      }
+    })();
   };
   const changeStatus = (id: string, status: ItemStatus) =>
     updateTrip((t) => ({
@@ -547,6 +665,19 @@ export default function Home() {
       activeTripId: w.trips.find((t) => t.id !== active.id)?.id || "",
     }));
     setNotice("Trip moved to history.");
+  };
+  const deleteActiveTrip = () => {
+    if (!active || !window.confirm(tr("Delete this trip permanently?"))) return;
+    setWorkspace((w) => {
+      const trips = w.trips.filter((trip) => trip.id !== active.id);
+      return {
+        ...w,
+        trips,
+        activeTripId: trips[0]?.id || "",
+      };
+    });
+    setTab("Overview");
+    setNotice("Trip deleted.");
   };
   const handleJoinedChat = (roomId: string, code: string, roomName: string) => {
     setWorkspace((current) => {
@@ -793,6 +924,12 @@ export default function Home() {
                           onClick={() => setTab("Packing list")}
                         >
                           <ListChecks size={16} /> {tr("Open checklist")}
+                        </button>
+                        <button
+                          className="history-delete"
+                          onClick={deleteActiveTrip}
+                        >
+                          <Trash2 size={16} /> {tr("Delete trip")}
                         </button>
                       </div>
                     </div>
@@ -1805,7 +1942,7 @@ export default function Home() {
             <div>
               <h3 id="create-trip-title">{tr("Create a new trip")}</h3>
               <p>
-                {tr("Start with a template, then customize the checklist.")}
+                {tr("Choose a template or enter a custom trip type. AI will create its checklist.")}
               </p>
             </div>
             <button type="button" className="icon-button" aria-label={tr("Dismiss")} onClick={() => setShowCreateTrip(false)}><X size={18} /></button>
@@ -1814,7 +1951,7 @@ export default function Home() {
             className="create-form"
             onSubmit={(e) => {
               e.preventDefault();
-              addTrip();
+              void addTrip();
             }}
           >
             <label>
@@ -1827,16 +1964,19 @@ export default function Home() {
             </label>
             <label>
               {tr("Trip type")}
-              <select
+              <input
                 value={newType}
                 onChange={(e) => setNewType(e.target.value)}
-              >
+                list="trip-type-options"
+                required
+                maxLength={60}
+                placeholder={tr("Choose or enter a trip type")}
+              />
+              <datalist id="trip-type-options">
                 {Object.keys(templates).map((t) => (
-                  <option key={t} value={t}>
-                    {tr(t)}
-                  </option>
+                  <option key={t} value={t} label={tr(t)} />
                 ))}
-              </select>
+              </datalist>
             </label>
             <label>
               {tr("Destination")}
@@ -1850,17 +1990,35 @@ export default function Home() {
               {tr("Start date")}
               <input
                 type="date"
+                min={minTripDate}
                 value={newStart}
-                onChange={(e) => setNewStart(e.target.value)}
+                onChange={(e) => {
+                  const date = e.target.value;
+                  if (date && date < minTripDate) {
+                    setNotice("Start date must be today or later.");
+                    return;
+                  }
+                  setNewStart(date);
+                  if (date && newEnd < date) setNewEnd(date);
+                }}
+                required
               />
             </label>
             <label>
               {tr("End date")}
               <input
                 type="date"
-                min={newStart}
+                min={minEndDate}
                 value={newEnd}
-                onChange={(e) => setNewEnd(e.target.value)}
+                onChange={(e) => {
+                  const date = e.target.value;
+                  if (date && date < minEndDate) {
+                    setNotice("End date must be on or after the start date.");
+                    return;
+                  }
+                  setNewEnd(date);
+                }}
+                required
               />
             </label>
             <label>
@@ -1873,7 +2031,12 @@ export default function Home() {
               />
             </label>
             <button className="primary" type="submit">
-              <Plus size={16} /> {tr("Create trip from template")}
+              <Plus size={16} />{" "}
+              {tr(
+                templates[newType.trim()]
+                  ? "Create trip from template"
+                  : "Create trip and generate checklist",
+              )}
             </button>
           </form>
         </section>
