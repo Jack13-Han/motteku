@@ -143,7 +143,7 @@ export default function Home(){
  },[packing.data,packing.loaded,packing.busy,memberAdmin,rosterScope,active?.pendingPacking]);
  const changeStatus=(id:string,status:ItemStatus)=>updateTrip(t=>({...t,items:t.items.map(i=>i.id===id?{...i,status}:i)}));
  const addItem=()=>{if(!itemName.trim())return;updateTrip(t=>({...t,items:[...t.items,newItem(itemName.trim(),t.type)]}));setItemName('');};
- const assignFairly=()=>{if(!travelMembers.length)return;let idx=0;updateTrip(t=>({...t,items:t.items.map(i=>{if(i.assignee==='Unassigned'||!t.members.some(m=>m.name===i.assignee)){const assignee=t.members[idx%t.members.length].name;idx++;return {...i,assignee};}return i;})}));setNotice('Unassigned items were distributed across members.');};
+ const assignFairly=()=>{if(!travelMembers.length)return;let idx=0;updateTrip(t=>({...t,items:t.items.map(i=>{if(i.assignee==='Unassigned'||!travelMembers.some(m=>m.name===i.assignee)){const assignee=travelMembers[idx%travelMembers.length].name;idx++;return {...i,assignee};}return i;})}));setNotice('Unassigned items were distributed across members.');};
  const addMember=async()=>{
    if(!memberName.trim()||!active||!packing.loaded||!packing.data||!memberAdmin||packing.busy)return;
    try{
