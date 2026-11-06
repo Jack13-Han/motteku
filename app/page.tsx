@@ -1,16 +1,20 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { onAuthStateChanged, signInAnonymously, type User } from 'firebase/auth';
+import { onAuthStateChanged, signInAnonymously, signOut, type User } from 'firebase/auth';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { auth, db, firebaseConfigured } from '@/lib/firebase';
-import { CalendarDays, Check, CheckCheck, CloudSun, Copy, Download, History, ListChecks, LoaderCircle, MessageCircle, Plus, RefreshCw, ShoppingCart, Sparkles, Users, Wallet, Weight, X, TentTree, Trash2, Save, Cloud, ClipboardCheck } from 'lucide-react';
-import TripChat from '@/components/TripChat';
+import { CalendarDays, Check, CheckCheck, CloudSun, Copy, Download, History, ListChecks, LoaderCircle, MessageCircle, Plus, RefreshCw, ShoppingCart, Sparkles, Users, Wallet, Weight, X, TentTree, Trash2, Save, Cloud, ClipboardCheck, LogOut, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import TripChat, { parseChatInvitation } from '@/components/TripChat';
 import TripPacking from '@/components/TripPacking';
 import PackingPreview, { type PackingDraftItem } from '@/components/PackingPreview';
 import BagPacking from '@/components/BagPacking';
 import PrepReminders from '@/components/PrepReminders';
 import { useLanguage } from '@/lib/i18n';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import AccountMenu from '@/components/AccountMenu';
+import NewTripDialog from '@/components/NewTripDialog';
+import NotificationCenter from '@/components/NotificationCenter';
 import { errorKey } from '@/lib/messages';
 import { usePacking } from '@/lib/usePacking';
 import { isCurrentAssignment, packingItemName, reconcilePacking, requiredQuantity, type TemplateSelection } from '@/lib/packing';
@@ -39,6 +43,11 @@ const seed:Workspace = { trips:[{id:'demo-trip',name:'Osaka Camping Weekend',typ
 function weatherLabel(code:number,translate:(text:string)=>string){ if(code===0)return translate('Clear'); if([1,2,3].includes(code))return translate('Partly cloudy'); if([45,48].includes(code))return translate('Fog'); if(code>=51&&code<=67)return translate('Rain'); if(code>=71&&code<=77)return translate('Snow'); if(code>=80&&code<=82)return translate('Rain showers'); if(code>=95)return translate('Thunderstorm'); return translate('Mixed'); }
 export default function Home(){
  const {language,setLanguage,t:tr,date}=useLanguage();
+ const router=useRouter();
+ const [sidebarCollapsed,setSidebarCollapsed]=useState(false);
+ const [loggingOut,setLoggingOut]=useState(false);
+ const skipAnonymousSignIn=useRef(false);
+
  const yen=(n:number)=>new Intl.NumberFormat(language==='ja'?'ja-JP':'en-US',{style:'currency',currency:'JPY',maximumFractionDigits:0}).format(n||0);
  const [workspace,setWorkspace]=useState<Workspace>(seed); const [ready,setReady]=useState(false); const [user,setUser]=useState<User|null>(null); const [remoteLoaded,setRemoteLoaded]=useState(false); const [remoteError,setRemoteError]=useState(false); const [tab,setTab]=useState('Overview'); const [newName,setNewName]=useState(''); const [newType,setNewType]=useState('Camping'); const [newLocation,setNewLocation]=useState('Osaka, Japan'); const [newStart,setNewStart]=useState(new Date(Date.now()+7*86400000).toISOString().slice(0,10)); const [newEnd,setNewEnd]=useState(new Date(Date.now()+9*86400000).toISOString().slice(0,10)); const [newBudget,setNewBudget]=useState('15000'); const [itemName,setItemName]=useState(''); const [memberName,setMemberName]=useState(''); const [expenseName,setExpenseName]=useState(''); const [expenseAmount,setExpenseAmount]=useState(''); const [expensePayer,setExpensePayer]=useState(''); const [weather,setWeather]=useState<any>(null); const [weatherLoading,setWeatherLoading]=useState(false); const [adviceByLanguage,setAdviceByLanguage]=useState<Record<string,any>>({}); const [adviceLoading,setAdviceLoading]=useState(false); const [notice,setNotice]=useState('');
  const [noticeParams,setNoticeParams]=useState<Record<string,string|number>>({});
@@ -49,6 +58,7 @@ export default function Home(){
  const [rosterScope,setRosterScope]=useState('');
  const bootstrappingRoster=useRef('');
  const automaticRecalculation=useRef('');
+ const [showCreateTrip,setShowCreateTrip]=useState(false);
  const [tripDraft,setTripDraft]=useState<Trip|null>(null);
  const [draftItems,setDraftItems]=useState<PackingDraftItem[]>([]);
  const [draftLoading,setDraftLoading]=useState(false);
@@ -66,7 +76,7 @@ export default function Home(){
  const updateTrip=(fn:(trip:Trip)=>Trip)=>setWorkspace(w=>({...w,trips:w.trips.map(t=>t.id===w.activeTripId?fn(t):t)}));
  useEffect(()=>{
    if(!firebaseConfigured || !auth || !db){try{const saved=localStorage.getItem('motteku-workspace');if(saved){const parsed=normalizeWorkspace(JSON.parse(saved));if(parsed.trips?.length)setWorkspace(parsed);}}catch{}setReady(true);return;}
-   const unsubscribe=onAuthStateChanged(auth, u=>{setUser(u);if(!u)signInAnonymously(auth!).catch(e=>{console.error(e);setNotice('Firebase sign-in failed. Check that Anonymous Authentication is enabled.');setReady(true);});});
+   const unsubscribe=onAuthStateChanged(auth, u=>{setUser(u);if(!u && !skipAnonymousSignIn.current)signInAnonymously(auth!).catch(e=>{console.error(e);setNotice('Firebase sign-in failed. Check that Anonymous Authentication is enabled.');setReady(true);});});
    return ()=>unsubscribe();
  },[]);
  useEffect(()=>{
@@ -95,7 +105,7 @@ export default function Home(){
    if(!tripDraft||!draftItems.length||draftItems.some(i=>(!i.template&&!i.name.trim())||!Number.isSafeInteger(i.quantity)||i.quantity<1))return;
    const trip:Trip={...tripDraft,pendingPacking:draftItems.map(i=>({template:i.template || {id:'custom-'+i.id,nameKey:'Custom item',category:'General',type:'shared',quantityRule:'fixed',fixedQuantity:i.quantity,unitKey:'unit.items'},...(i.name.trim()?{customName:i.name.trim()}:{})})),items:[]};
    setWorkspace(w=>({...w,trips:[trip,...w.trips],activeTripId:trip.id}));
-   setTripDraft(null);setDraftItems([]);setDraftError('');setNewName('');setTab('Packing list');setNotice('Trip and confirmed packing list saved.');
+   setTripDraft(null);setDraftItems([]);setDraftError('');setNewName('');setShowCreateTrip(false);setTab('Packing list');setNotice('Trip and confirmed packing list saved.');
  };
  useEffect(()=>{
    if(!active?.pendingPacking?.length||!packing.loaded||!packing.data||packing.busy||!memberAdmin||rosterScope!==packingScope||applyingDraft.current===active.id)return;
@@ -158,11 +168,233 @@ export default function Home(){
  useEffect(()=>{if(active && tab==='Weather & AI' && !advice && Object.keys(adviceByLanguage).some(key=>key.startsWith(active.id + ':')) && !autoAdviceRequests.current.has(adviceKey)) void getAdvice();},[language,adviceByLanguage,active?.id,tab]);
  const copyTrip=()=>{const copy={...active,id:uid(),name:`${active.name} (${tr("Copy")})`,pendingPacking:templateSelections,createdAt:new Date().toISOString(),bags:[],sharedChatId:undefined,inviteCode:undefined,items:active.items.map(i=>({...i,id:uid(),status:'Need to buy' as ItemStatus,paidBy:'',comment:'',bagId:'',bagLocation:''}))};setWorkspace(w=>({...w,trips:[copy,...w.trips],activeTripId:copy.id,history:[{...active,members:travelMembers.map(m=>({id:m.id,name:m.name})),people:travelMembers.length,pendingPacking:templateSelections},...w.history]}));setNotice('Trip copied. Item statuses reset for the new trip.');};
  const finishTrip=()=>{setWorkspace(w=>({...w,history:[{...active,members:travelMembers.map(m=>({id:m.id,name:m.name})),people:travelMembers.length,pendingPacking:templateSelections},...w.history],trips:w.trips.filter(t=>t.id!==active.id),activeTripId:w.trips.find(t=>t.id!==active.id)?.id||''}));setNotice('Trip moved to history.');};
+  const handleJoinedChat = (roomId: string, code: string, roomName: string) => {
+    setWorkspace((current) => {
+      const existing = current.trips.find((trip) => trip.sharedChatId === roomId);
+      if (existing) {
+        return {
+          ...current,
+          activeTripId: existing.id,
+          trips: current.trips.map((trip) => trip.id === existing.id ? { ...trip, inviteCode: code } : trip),
+        };
+      }
+      const joinedTrip: Trip = {
+        id: uid(), name: roomName || tr("Shared group"), type: "Shared trip",
+        location: "", startDate: "", endDate: "", prepStartDate: "",
+        people: 1, budget: 0,
+        members: [{ id: user?.uid || uid(), name: user?.displayName || user?.email?.split("@")[0] || "Me" }],
+        items: [], expenses: [], bags: [], sharedChatId: roomId, inviteCode: code,
+        createdAt: new Date().toISOString(),
+      };
+      return { ...current, trips: [joinedTrip, ...current.trips], activeTripId: joinedTrip.id };
+    });
+    setTab("Group chat");
+  };
+  const toggleSidebar = () =>
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem("motteku-sidebar-collapsed", String(next));
+      } catch {}
+      return next;
+    });
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    skipAnonymousSignIn.current = true;
+    try {
+      if (auth) await signOut(auth);
+      router.replace("/login");
+    } catch {
+      skipAnonymousSignIn.current = false;
+      setLoggingOut(false);
+      setNotice("Could not log out. Please try again.");
+    }
+  };
+  useEffect(() => {
+    try {
+      setSidebarCollapsed(
+        localStorage.getItem("motteku-sidebar-collapsed") === "true",
+      );
+    } catch {}
+  }, []);
+  useEffect(() => {
+    const incoming = parseChatInvitation(window.location.href);
+    let pending = incoming;
+    try {
+      if (incoming) {
+        sessionStorage.setItem("motteku-pending-chat-invite", JSON.stringify(incoming));
+      } else {
+        const saved = JSON.parse(sessionStorage.getItem("motteku-pending-chat-invite") || "null");
+        if (saved && typeof saved.roomId === "string" && typeof saved.code === "string") {
+          pending = parseChatInvitation(`${window.location.origin}/?joinChat=${encodeURIComponent(saved.roomId)}&inviteCode=${encodeURIComponent(saved.code)}`);
+        }
+      }
+    } catch {}
+    if (pending) setTab("Group chat");
+  }, []);
+ const tripCreationForm = <section className="panel create-panel" id="create-trip"><div className="panel-head"><div><h3 id="create-trip-title">{tr("Create a new trip")}</h3><p>{tr("Enter trip details and member names, then review calculated quantities.")}</p></div><Plus className="muted-icon"/></div><fieldset disabled={draftLoading || !!tripDraft} className="trip-details"><form className="create-form" onSubmit={e=>{e.preventDefault();addTrip()}}><label>{tr("Trip name")}<input value={newName} onChange={e=>setNewName(e.target.value)} placeholder={tr("e.g. Summer beach trip")}/></label><label>{tr("Trip type")}<select value={newType} onChange={e=>setNewType(e.target.value)}>{Object.keys(templates).map(t=><option key={t} value={t}>{tr(t)}</option>)}</select></label><label>{tr("Destination")}<input value={newLocation} onChange={e=>setNewLocation(e.target.value)} placeholder={tr("Example: Osaka, Japan")}/></label><label>{tr("Start date")}<input type="date" value={newStart} onChange={e=>setNewStart(e.target.value)}/></label><label>{tr("End date")}<input type="date" min={newStart} value={newEnd} onChange={e=>setNewEnd(e.target.value)}/></label><label>{tr("Group budget (¥)")}<input type="number" min="0" value={newBudget} onChange={e=>setNewBudget(e.target.value)}/></label><label>{tr("Participant names (one per line)")}<textarea required value={newMemberNames} onChange={e=>setNewMemberNames(e.target.value)} placeholder={tr("Example member names")}/><small>{tr("Members: {count}",{count:newTravelers.length})}</small></label><button className="primary" type="submit" disabled={draftLoading}>{draftLoading?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} {tr(draftLoading?'Generating suggestions...':'Generate template preview')}</button></form></fieldset>{draftError&&<p role="status">{tr(draftError)}</p>}{tripDraft&&<PackingPreview items={draftItems} setItems={setDraftItems} onConfirm={confirmTrip} onCancel={()=>{setTripDraft(null);setDraftItems([]);setDraftError('');}}/>}</section>;
  const nav=[['Overview',CalendarDays],['Packing list',ListChecks],['Bags & photos',ClipboardCheck],['Group chat',MessageCircle],['Reminders',CalendarDays],['Members',Users],['Budget',Wallet],['Weather & AI',CloudSun],['History',History]] as const;
  if(!ready)return <main className="loading"><LoaderCircle className="spin" size={28}/> {tr('Loading Motteku…')}</main>;
   return <main className="app-shell">
-  <aside className="sidebar"><div className="brand"><div className="brand-mark"><TentTree size={25}/></div><div><b>Motteku</b><small>{tr("Pack together, go further")}</small></div></div><div className="workspace-label">{tr("WORKSPACE")}</div><nav>{nav.map(([label,Icon])=><button key={label} className={`nav-item ${tab===label?'selected':''}`} onClick={()=>setTab(label)}><Icon size={18}/><span>{tr(label)}</span>{label==='Packing list'&&active&&<em>{active.items.length+(packing.loaded?packing.data?.items.length||0:0)}</em>}</button>)}</nav><div className="sidebar-bottom"><div className="sync-dot"/><span>{tr(firebaseConfigured&&user&&!remoteError?'Firebase connected mode':'Local demo mode')}</span><small>{tr(firebaseConfigured&&user&&!remoteError?'Changes sync to Firestore':'Data saved in this browser')}</small></div></aside>
-   <section className="main-area"><header className="topbar"><div><div className="eyebrow">{tr("YOUR NEXT ADVENTURE STARTS HERE")}</div><h1>{tr(tab==='Overview'?'Trip overview':tab==='Packing list'?'Packing checklist':tab==='Bags & photos'?'Bags & item locations':tab==='Group chat'?'Trip group chat':tab==='Reminders'?'Preparation reminders':tab==='Members'?'Your travel crew':tab==='Budget'?'Budget & expenses':tab==='Weather & AI'?'Weather & smart advice':'Trip history')}</h1></div><div className="top-actions"><Link className="auth-link" href="/trips">{tr("Your trips")}</Link><Link className="auth-link" href="/login">{tr("Log in")}</Link><select aria-label={tr("Select trip")} disabled={packing.busy} value={active?.id||''} onChange={e=>setWorkspace(w=>({...w,activeTripId:e.target.value}))}>{workspace.trips.length?workspace.trips.map(t=><option key={t.id} value={t.id}>{t.name}</option>):<option value="">{tr("No active trip")}</option>}</select><select className="language-select" aria-label={tr('Language')} value={language} onChange={e=>setLanguage(e.target.value as 'ja'|'en')}><option value="ja">{tr('Japanese')}</option><option value="en">{tr('English')}</option></select><Link className="primary small" href="/trips/new"><Plus size={16}/> {tr("New trip")}</Link></div></header>
+      <aside
+        className={sidebarCollapsed ? "sidebar sidebar-collapsed" : "sidebar"}
+      >
+        <div className="sidebar-header">
+          <div className="brand">
+            <div className="brand-mark">
+              <TentTree size={25} />
+              <button
+                className="sidebar-toggle"
+                type="button"
+                onClick={toggleSidebar}
+                title={tr(
+                  sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar",
+                )}
+                aria-label={tr(
+                  sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar",
+                )}
+                aria-expanded={!sidebarCollapsed}
+                aria-controls="workspace-navigation"
+              >
+                {sidebarCollapsed ? (
+                  <PanelLeftOpen size={18} />
+                ) : (
+                  <PanelLeftClose size={18} />
+                )}
+              </button>
+            </div>
+            <div className="brand-copy">
+              <b>Motteku</b>
+              <small>{tr("Pack together, go further")}</small>
+            </div>
+          </div>
+        </div>
+        <div className="sidebar-scroll">
+          <div className="workspace-label">{tr("WORKSPACE")}</div>
+          <nav id="workspace-navigation" aria-label={tr("WORKSPACE")}>
+            {nav.map(([label, Icon]) => (
+              <button
+                key={label}
+                className={`nav-item ${tab === label ? "selected" : ""}`}
+                title={tr(label)}
+                aria-current={tab === label ? "page" : undefined}
+                onClick={() => setTab(label)}
+              >
+                <Icon size={18} />
+                <span>{tr(label)}</span>
+                {label === "Packing list" && active && (
+                  <em>{active.items.length + (packing.loaded ? packing.data?.items.length || 0 : 0)}</em>
+                )}
+              </button>
+            ))}
+          </nav>
+        </div>
+        <div className="sidebar-footer">
+          <div className="sidebar-bottom">
+            <div className="sync-dot" />
+            <span>
+              {tr(
+                firebaseConfigured && user && !remoteError
+                  ? "Firebase connected mode"
+                  : "Local demo mode",
+              )}
+            </span>
+            <small>
+              {tr(
+                firebaseConfigured && user && !remoteError
+                  ? "Changes sync to Firestore"
+                  : "Data saved in this browser",
+              )}
+            </small>
+          </div>
+          <button
+            className="logout-button"
+            type="button"
+            onClick={handleLogout}
+            disabled={loggingOut}
+            title={tr(loggingOut ? "Signing out…" : "Log out")}
+            aria-label={tr(loggingOut ? "Signing out…" : "Log out")}
+          >
+            <LogOut size={18} />
+            <span>{tr(loggingOut ? "Signing out…" : "Log out")}</span>
+          </button>
+        </div>
+      </aside>
+      <section className="main-area">
+        <header className="topbar">
+          <div>
+            <div className="eyebrow">
+              {tr("YOUR NEXT ADVENTURE STARTS HERE")}
+            </div>
+            <h1>
+              {tr(
+                tab === "Overview"
+                  ? "Trip overview"
+                  : tab === "Packing list"
+                    ? "Packing checklist"
+                    : tab === "Bags & photos"
+                      ? "Bags & item locations"
+                      : tab === "Group chat"
+                        ? "Trip group chat"
+                        : tab === "Reminders"
+                          ? "Preparation reminders"
+                          : tab === "Members"
+                            ? "Your travel crew"
+                            : tab === "Budget"
+                              ? "Budget & expenses"
+                              : tab === "Weather & AI"
+                                ? "Weather & smart advice"
+                                : "Trip history",
+              )}
+            </h1>
+          </div>
+          <div className="top-actions"><Link className="auth-link" href="/trips">{tr("Your trips")}</Link>
+            <NotificationCenter
+              trips={workspace.trips}
+              accountId={user?.uid || "local"}
+              onOpen={(tripId, nextTab) => {
+                setWorkspace((w) => ({ ...w, activeTripId: tripId }));
+                setTab(nextTab);
+              }}
+            />
+            {(!user || user.isAnonymous) && (
+              <Link className="auth-link" href="/login">
+                {tr("Log in")}
+              </Link>
+            )}
+            <select
+              aria-label={tr("Select trip")}
+              disabled={packing.busy} value={active?.id || ""}
+              onChange={(e) =>
+                setWorkspace((w) => ({ ...w, activeTripId: e.target.value }))
+              }
+            >
+              {workspace.trips.length ? (
+                workspace.trips.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))
+              ) : (
+                <option value="">{tr("No active trip")}</option>
+              )}
+            </select>
+            <select
+              className="language-select"
+              aria-label={tr("Language")}
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as "ja" | "en")}
+            >
+              <option value="ja">{tr("Japanese")}</option>
+              <option value="en">{tr("English")}</option>
+            </select>
+            <NewTripDialog open={showCreateTrip} onOpenChange={setShowCreateTrip} busy={draftLoading}>{tripCreationForm}</NewTripDialog>
+            {user && !user.isAnonymous && (
+              <AccountMenu key={user.uid} user={user} onLogout={handleLogout} loggingOut={loggingOut} />
+            )}
+          </div>
+        </header>
   {notice&&<div className="notice"><span>{tr(notice,noticeParams)}</span><button onClick={()=>setNotice('')} aria-label={tr("Dismiss")}><X size={16}/></button></div>}
   {packing.error && tab!=='Packing list' && <p className="notice" role="alert">{tr(packing.error)}</p>}
   {memberToRemove && packing.loaded && packing.data && travelMembers.length>1 && <MemberRemovalDialog data={packing.data} next={reconcilePacking(packing.data,travelMembers.filter(m=>m.id!==memberToRemove.id),packingScope,packingUid)} removed={packing.data.members.filter(m=>m.id===memberToRemove.id)} legacyCount={active.items.filter(i=>i.assignee===memberToRemove.name).length} busy={packing.busy} onCancel={()=>setMemberToRemove(null)} onConfirm={()=>void confirmMemberRemoval()}/>}
@@ -174,17 +406,43 @@ export default function Home(){
   </>}
   {tab==='Packing list'&&<><TripPacking packing={packing} tripType={active.type} key={`${active.id}:${active.sharedChatId||''}`} tripId={active.id} roomId={active.sharedChatId} userUid={user?.uid} members={travelMembers} bags={active.bags||[]} legacyItems={active.items}/><details className="panel legacy-packing"><summary>{tr("Legacy checklist / shopping management")}</summary>  <section className="panel page-panel"><div className="panel-head"><div><h3>{tr("Everything you need to bring")}</h3><p>{tr("Track ownership, shopping, weight and responsibility.")}</p></div><span className="count-badge">{active.items.length} {tr('items')}</span></div><form className="add-row" onSubmit={e=>{e.preventDefault();addItem()}}><input placeholder={tr("Add an item, e.g. portable charger")} value={itemName} onChange={e=>setItemName(e.target.value)}/><button className="primary" type="submit"><Plus size={16}/> {tr("Add item")}</button></form><div className="table-wrap"><table><thead><tr><th>{tr("Item")}</th><th>{tr("Status")}</th><th>{tr("Assigned to")}</th><th>{tr("Weight (kg)")}</th><th>{tr("Price (¥)")}</th><th>{tr("Comment")}</th><th></th></tr></thead><tbody>{active.items.map(i=><tr key={i.id}><td><b>{i.name}{(i.quantity||1)>1?` x ${i.quantity}`:null}</b><small className="cell-sub">{tr(i.category)}</small></td><td><select className={`status-select status-${i.status.replaceAll(' ','-').toLowerCase()}`} value={i.status} onChange={e=>changeStatus(i.id,e.target.value as ItemStatus)}>{(['Owned','Need to buy','Purchased','Packed'] as ItemStatus[]).map(s=><option key={s} value={s}>{tr(s)}</option>)}</select></td><td><select value={i.assignee} onChange={e=>updateTrip(t=>({...t,items:t.items.map(x=>x.id===i.id?{...x,assignee:e.target.value}:x)}))}><option value="Unassigned">{tr("Unassigned")}</option>{travelMembers.map(m=><option key={m.id}>{m.name}</option>)}</select></td><td><input className="table-input number" type="number" min="0" step="0.1" value={i.weight} onChange={e=>updateTrip(t=>({...t,items:t.items.map(x=>x.id===i.id?{...x,weight:Number(e.target.value)}:x)}))}/></td><td><input className="table-input number" type="number" min="0" step="1" value={i.price} onChange={e=>updateTrip(t=>({...t,items:t.items.map(x=>x.id===i.id?{...x,price:Number(e.target.value)}:x)}))}/></td><td><input className="table-input" placeholder={tr("Add note…")} value={i.comment} onChange={e=>updateTrip(t=>({...t,items:t.items.map(x=>x.id===i.id?{...x,comment:e.target.value}:x)}))}/></td><td><button className="icon-button danger" aria-label={tr("Delete {name}",{name:i.name})} onClick={()=>updateTrip(t=>({...t,items:t.items.filter(x=>x.id!==i.id)}))}><Trash2 size={15}/></button></td></tr>)}</tbody></table></div><div className="bottom-actions"><button className="soft-button" onClick={assignFairly}><Users size={16}/> {tr("Auto-assign unassigned")}</button><button className="soft-button" onClick={()=>{const csv=[['Item','Quantity','Type','Status','Assigned to','Weight (kg)','Price (¥)','Comment'].map(label=>tr(label)).join(','),...active.items.map(i=>[i.name,i.quantity||1,tr(i.category),tr(i.status),i.assignee==='Unassigned'?tr('Unassigned'):i.assignee,i.weight,i.price,i.comment].map(v=>`"${String(v).replaceAll('"','""')}"`).join(','))].join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}));a.download='motteku-packing-list.csv';a.click();URL.revokeObjectURL(a.href)}}><Download size={16}/> {tr("Export CSV")}</button></div></section></details></>}
    {tab==='Bags & photos'&&<BagPacking bags={active.bags||[]} items={active.items} chatId={active.sharedChatId} userUid={user?.uid} onBagsChange={bags=>{updateTrip(t=>({...t,bags}));if(memberAdmin)void packing.mutate(current=>({...current,bags}),(batch,parent)=>batch.update(parent,{bags,bagIds:bags.map(b=>b.id)}));}} onItemChange={(id,bagId,location)=>updateTrip(t=>({...t,items:t.items.map(i=>i.id===id?{...i,bagId,bagLocation:location}:i)}))} onSharedPlanChange={(bags,placements)=>updateTrip(t=>({...t,bags,items:t.items.map(i=>{const shared=placements.find(p=>p.name.toLowerCase()===i.name.toLowerCase());return shared?{...i,bagId:shared.bagId,bagLocation:shared.bagLocation}:i})}))} onNotice={setNotice}/>}
-   {tab==='Group chat'&&<TripChat tripId={active.id} chatId={active.sharedChatId} inviteCode={active.inviteCode} userUid={user?.uid} tripName={active.name} onRoomChange={(id,code)=>updateTrip(t=>({...t,sharedChatId:id,inviteCode:code}))} onNotice={setNotice}/>}
+   {tab==='Group chat'&&<TripChat userName={user?.displayName || undefined} onJoinedRoom={handleJoinedChat} tripId={active.id} chatId={active.sharedChatId} inviteCode={active.inviteCode} userUid={user?.uid} tripName={active.name} onRoomChange={(id,code)=>updateTrip(t=>({...t,sharedChatId:id,inviteCode:code}))} onNotice={setNotice}/>}
    {tab==='Reminders'&&<PrepReminders tripId={active.id} tripName={active.name} startDate={active.startDate} prepStartDate={active.prepStartDate} items={active.items} onPrepDate={date=>updateTrip(t=>({...t,prepStartDate:date}))} onNotice={setNotice}/>}
    {tab==='Members'&&<div className="content-grid"><section className="panel page-panel"><div className="panel-head"><div><h3>{tr("Travel crew")}</h3><p>{tr("Add members and assign items fairly.")}</p></div><Users className="muted-icon"/></div><form className="add-row" onSubmit={e=>{e.preventDefault();addMember()}}><input placeholder={tr("Member name")} value={memberName} onChange={e=>setMemberName(e.target.value)}/><button className="primary" disabled={!memberAdmin || !packing.loaded || packing.busy}><Plus size={16}/> {tr("Add member")}</button></form><div className="crew-list">{travelMembers.map((m,idx)=><div className="crew-card" key={m.id}><span className={`avatar avatar-${idx%5} big-avatar`}>{m.name.slice(0,1).toUpperCase()}</span><div className="crew-info"><b>{m.name}</b><small>{tr("{count} assigned items",{count:active.items.filter(i=>i.assignee===m.name).length})} · {active.items.filter(i=>i.assignee===m.name).reduce((s,i)=>s+i.weight,0).toFixed(1)} kg</small></div><button className="icon-button danger" onClick={()=>{setMemberToRemove(m)}} disabled={!memberAdmin || !packing.loaded || packing.busy || travelMembers.length<=1} aria-label={tr("Delete {name}",{name:m.name})}><Trash2 size={16}/></button></div>)}</div><button className="primary" onClick={assignFairly}><Users size={16}/> {tr("Auto-assign unassigned items")}</button></section><section className="panel page-panel"><div className="panel-head"><div><h3>{tr("Load balance")}</h3><p>{tr("Compare how much each person carries.")}</p></div><Weight className="muted-icon"/></div>{travelMembers.map(m=>{const kg=active.items.filter(i=>i.assignee===m.name).reduce((s,i)=>s+i.weight,0);const max=Math.max(1,...travelMembers.map(mm=>active.items.filter(i=>i.assignee===mm.name).reduce((s,i)=>s+i.weight,0)));return <div className="load-row" key={m.id}><div><b>{m.name}</b><span>{kg.toFixed(1)} kg</span></div><div className="load-track"><span style={{width:`${kg/max*100}%`}}/></div></div>})}<p className="helper-note">{tr("The auto-assign tool distributes only unassigned items. You can manually change assignments to balance weight more accurately.")}</p></section></div>}
   {tab==='Budget'&&<div className="content-grid"><section className="panel page-panel"><div className="panel-head"><div><h3>{tr("Trip budget")}</h3><p>{tr("Track planned budget and purchased items.")}</p></div><Wallet className="muted-icon"/></div><label className="field-label">{tr("Group budget (¥)")}<input type="number" min="0" value={active.budget} onChange={e=>updateTrip(t=>({...t,budget:Number(e.target.value)}))}/></label><div className="budget-summary"><div><span>{tr("Total purchased items")}</span><b>{yen(stats.spent)}</b></div><div><span>{tr("Budget remaining")}</span><b className={active.budget-stats.spent<0?'text-danger':''}>{yen(active.budget-stats.spent)}</b></div><div><span>{tr("Equal share per member")}</span><b>{yen(stats.spent/Math.max(1,travelMembers.length))}</b></div></div><div className="progress-line budget-progress"><span style={{width:`${active.budget?Math.min(100,stats.spent/active.budget*100):0}%`}}/></div><p className="helper-note">{tr("Purchased total counts the price of items marked “Purchased” or “Packed”. Mark an item as Purchased after buying it.")}</p></section><section className="panel page-panel"><div className="panel-head"><div><h3>{tr("Expense log")}</h3><p>{tr("Record who paid for shared purchases.")}</p></div><Wallet className="muted-icon"/></div><form className="expense-form" onSubmit={e=>{e.preventDefault();if(!expenseName.trim()||Number(expenseAmount)<=0)return;updateTrip(t=>({...t,expenses:[...(t.expenses||[]),{id:uid(),name:expenseName.trim(),amount:Number(expenseAmount),payer:expensePayer||t.members[0]?.name||'Me'}]}));setExpenseName('');setExpenseAmount('');}}><input placeholder={tr("Expense name")} value={expenseName} onChange={e=>setExpenseName(e.target.value)}/><input placeholder={tr("Amount (¥)")} type="number" min="1" value={expenseAmount} onChange={e=>setExpenseAmount(e.target.value)}/><select value={expensePayer} onChange={e=>setExpensePayer(e.target.value)}><option value="">{tr("Paid by…")}</option>{travelMembers.map(m=><option key={m.id}>{m.name}</option>)}</select><button className="primary"><Plus size={16}/> {tr("Add")}</button></form>{expenses.length===0?<div className="empty-inline">{tr("No expenses recorded yet. Add a purchase above.")}</div>:<><div className="expense-list">{expenses.map(x=><div className="expense-row" key={x.id}><div><b>{x.name}</b><small>{tr("Paid by {name}",{name:x.payer})}</small></div><strong>{yen(x.amount)}</strong><button className="icon-button danger" onClick={()=>updateTrip(t=>({...t,expenses:(t.expenses||[]).filter(y=>y.id!==x.id)}))}><Trash2 size={15}/></button></div>)}</div><div className="settlement"><h4>{tr("Equal split summary")}</h4><p>{tr("Total: {total} ÷ {count} people = {share} per person.",{total:yen(expenses.reduce((s,x)=>s+x.amount,0)),count:Math.max(1,travelMembers.length),share:yen(expenses.reduce((s,x)=>s+x.amount,0)/Math.max(1,travelMembers.length))})}</p>{travelMembers.map(m=>{const paid=expenses.filter(x=>x.payer===m.name).reduce((s,x)=>s+x.amount,0);const share=expenses.reduce((s,x)=>s+x.amount,0)/Math.max(1,travelMembers.length);return <div className="settle-row" key={m.id}><span>{m.name}</span><span>{tr("Paid {amount}",{amount:yen(paid)})}</span><b className={paid-share>=0?'text-green':'text-danger'}>{tr(paid-share>=0?"Gets back {amount}":"Owes {amount}",{amount:yen(Math.abs(paid-share))})}</b></div>})}</div></>}</section></div>}
   {tab==='Weather & AI'&&<div className="content-grid"><section className="panel page-panel"><div className="panel-head"><div><h3>{tr("Destination forecast")}</h3><p>{tr("Weather helps your group pack smarter.")}</p></div><CloudSun className="muted-icon"/></div><label className="field-label">{tr("Destination or city")}<input value={active.location} onChange={e=>updateTrip(t=>({...t,location:e.target.value}))} placeholder={tr("Example: Osaka, Japan")}/></label><button className="primary" onClick={fetchWeather} disabled={weatherLoading}>{weatherLoading?<LoaderCircle className="spin" size={16}/>:<RefreshCw size={16}/>} {tr('Get 7-day forecast')}</button>{weather?.daily&&<div className="forecast-grid">{weather.daily.time.map((day:string,i:number)=><div className="forecast-day" key={day}><small>{date(day)}</small><CloudSun size={24}/><b>{Math.round(weather.daily.temperature_2m_max[i])}° / {Math.round(weather.daily.temperature_2m_min[i])}°</b><span>{weatherLabel(weather.daily.weather_code[i],tr)}</span><small>{weather.daily.precipitation_probability_max[i]??0}% {tr('rain')}</small></div>)}</div>}<p className="helper-note">{tr("Weather is provided by Open-Meteo. Forecasts may not cover the entire trip if it is more than 7 days away.")}</p></section><section className="panel page-panel"><div className="panel-head"><div><h3>{tr("AI packing advice")}</h3><p>{tr("Get suggestions based on your trip and forecast.")}</p></div><Sparkles className="muted-icon"/></div><div className="ai-banner"><Sparkles size={23}/><div><b>{tr("Your trip, thoughtfully packed")}</b><p>{tr("Suggestions adapt to trip type, destination and forecast when available.")}</p></div></div><button className="primary" onClick={getAdvice} disabled={adviceLoading}>{adviceLoading?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} {tr('Generate suggestions')}</button>{advice&&<div className="advice-results"><h4>{tr("Recommendation")}</h4><p>{advice.builtIn?tr(advice.advice):advice.advice}</p>{advice.suggestedItems?.length>0&&<><h4>{tr("Suggested items")}</h4>{advice.suggestedItems.map((n:string)=><button className="suggestion-chip" key={n} onClick={()=>{if(!active.items.some(i=>i.name.toLowerCase()===(advice.builtIn?tr(n):n).toLowerCase()))updateTrip(t=>({...t,items:[...t.items,newItem(advice.builtIn?tr(n):n,'AI suggestion')]}));setNoticeParams({name:advice.builtIn?tr(n):n});setNotice("{name} added to the packing list.")}}><Plus size={13}/>{advice.builtIn?tr(n):n}</button>)}</>}{advice.cautions?.length>0&&<><h4>{tr("Things to remember")}</h4><ul>{advice.cautions.map((n:string)=><li key={n}>{advice.builtIn?tr(n):n}</li>)}</ul></>}</div>}<p className="helper-note">{tr("If no Gemini key is configured, Motteku uses simple built-in suggestions. Add GEMINI_API_KEY in .env.local to enable Gemini.")}</p></section></div>}
   </>}
    {tab==='History'&&<section className="panel page-panel"><div className="panel-head"><div><h3>{tr("Past trips")}</h3><p>{tr("Copy a previous packing list and reuse it.")}</p></div><History className="muted-icon"/></div>{workspace.history.length===0?<div className="empty-inline">{tr("Completed trips will appear here when you finish a trip.")}</div>:workspace.history.map(t=><div className="history-card" key={t.id}><div className="history-icon"><ClipboardCheck size={20}/></div><div className="history-info"><b>{t.name}</b><small>{t.location} · {tr("{count} items",{count:t.items.length})} · {date(t.startDate)}</small></div><button className="soft-button" onClick={()=>{const cp={...t,id:uid(),name:`${t.name} (${tr("Copy")})`,pendingPacking:(t.pendingPacking||[]),createdAt:new Date().toISOString(),bags:[],sharedChatId:undefined,inviteCode:undefined,items:t.items.map(i=>({...i,id:uid(),status:'Need to buy' as ItemStatus,bagId:'',bagLocation:''}))};setWorkspace(w=>({...w,trips:[cp,...w.trips],activeTripId:cp.id}));setTab('Overview')}}><Copy size={15}/> {tr("Reuse list")}</button></div>)}</section>}
-<details className="panel legacy-packing"><summary>{tr("Legacy demo trip creation")}</summary>  <section className="panel create-panel" id="create-trip"><div className="panel-head"><div><h3>{tr("Create a new trip")}</h3><p>{tr("Enter trip details and member names, then review calculated quantities.")}</p></div><Plus className="muted-icon"/></div><fieldset disabled={draftLoading || !!tripDraft} className="trip-details"><form className="create-form" onSubmit={e=>{e.preventDefault();addTrip()}}><label>{tr("Trip name")}<input value={newName} onChange={e=>setNewName(e.target.value)} placeholder={tr("e.g. Summer beach trip")}/></label><label>{tr("Trip type")}<select value={newType} onChange={e=>setNewType(e.target.value)}>{Object.keys(templates).map(t=><option key={t} value={t}>{tr(t)}</option>)}</select></label><label>{tr("Destination")}<input value={newLocation} onChange={e=>setNewLocation(e.target.value)} placeholder={tr("Example: Osaka, Japan")}/></label><label>{tr("Start date")}<input type="date" value={newStart} onChange={e=>setNewStart(e.target.value)}/></label><label>{tr("End date")}<input type="date" min={newStart} value={newEnd} onChange={e=>setNewEnd(e.target.value)}/></label><label>{tr("Group budget (¥)")}<input type="number" min="0" value={newBudget} onChange={e=>setNewBudget(e.target.value)}/></label><label>{tr("Participant names (one per line)")}<textarea required value={newMemberNames} onChange={e=>setNewMemberNames(e.target.value)} placeholder={tr("Example member names")}/><small>{tr("Members: {count}",{count:newTravelers.length})}</small></label><button className="primary" type="submit" disabled={draftLoading}>{draftLoading?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} {tr(draftLoading?'Generating suggestions...':'Generate template preview')}</button></form></fieldset>{draftError&&<p role="status">{tr(draftError)}</p>}{tripDraft&&<PackingPreview items={draftItems} setItems={setDraftItems} onConfirm={confirmTrip} onCancel={()=>{setTripDraft(null);setDraftItems([]);setDraftError('');}}/>}</section>
-</details>  <footer>{tr("Made for groups who want to spend less time packing and more time exploring.")} <span>{tr("Motteku · Prototype")}</span></footer></section>
- </main>
+  <footer>{tr("Made for groups who want to spend less time packing and more time exploring.")} <span>{tr("Motteku · Prototype")}</span></footer></section>
+ </main>;
 }
-function Stat({icon,label,value,sub,color}:{icon:React.ReactNode;label:string;value:string;sub:string;color:string}){return <div className="stat-card"><div className={`stat-icon ${color}`}>{icon}</div><div className="stat-label">{label}</div><div className="stat-value">{value}</div><div className="stat-sub">{sub}</div></div>}
-function Detail({label,value}:{label:string;value:string}){return <div className="detail-row"><span>{label}</span><b>{value}</b></div>}
-
+function Stat({
+  icon,
+  label,
+  value,
+  sub,
+  color,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub: string;
+  color: string;
+}) {
+  return (
+    <div className="stat-card">
+      <div className={`stat-icon ${color}`}>{icon}</div>
+      <div className="stat-label">{label}</div>
+      <div className="stat-value">{value}</div>
+      <div className="stat-sub">{sub}</div>
+    </div>
+  );
+}
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="detail-row">
+      <span>{label}</span>
+      <b>{value}</b>
+    </div>
+  );
+}

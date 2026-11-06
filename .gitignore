@@ -6,3 +6,5 @@ out
 .DS_Store
 tsconfig.tsbuildinfo
 firebase-firestore-4.8.0.tgz
+.env.example
+

@@ -1,7 +1,13 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    function isTripMember(tripId) {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/sharedTrips/$(tripId)/members/$(request.auth.uid));
+    }
+
     match /sharedTrips/{tripId}/bags/{fileName} {
+      // Preserve the existing shared bag/photo permissions.
       allow read: if request.auth != null
         && firestore.exists(/databases/(default)/documents/sharedTrips/$(tripId)/members/$(request.auth.uid));
       allow create, update: if request.auth != null
@@ -9,6 +15,34 @@ service firebase.storage {
         && request.resource.size < 2 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
       allow delete: if false;
+    }
+
+    match /sharedTrips/{tripId}/chat/{userId}/{fileName} {
+      function validChatFileName() {
+        // Firestore auto-generated message IDs contain 20 alphanumeric characters.
+        return fileName.matches('^[A-Za-z0-9]{20}[.]jpg$');
+      }
+
+      function messageExists() {
+        let messageId = fileName.replace('[.]jpg$', '');
+        return firestore.exists(/databases/(default)/documents/sharedTrips/$(tripId)/messages/$(messageId));
+      }
+
+      allow get: if isTripMember(tripId);
+      // Message documents supply exact paths; listing all objects is unnecessary.
+      allow list: if false;
+      allow create: if isTripMember(tripId)
+        && request.auth.uid == userId
+        && validChatFileName()
+        && request.resource.size > 0
+        && request.resource.size <= 2 * 1024 * 1024
+        && request.resource.contentType == 'image/jpeg';
+      allow update: if false;
+      // A failed send may clean up its upload, but a posted photo is immutable.
+      allow delete: if isTripMember(tripId)
+        && request.auth.uid == userId
+        && validChatFileName()
+        && !messageExists();
     }
   }
 }
