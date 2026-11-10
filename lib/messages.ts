@@ -1,11 +1,8 @@
 import { mergeMessages } from './messages-merged';
 import { extraJa } from './messages-extra';
 import { tripMessages } from './messages-trips';
-import { nanMessages } from './messages-nan';
 export type Language = 'ja' | 'en';
 const baseJa: Record<string, string> = {
-  'Retry packing initialization': '持ち物の初期化を再試行',
-  'Could not load the workspace. Check Firebase permissions.': 'ワークスペースを読み込めませんでした。Firebaseのアクセス権限を確認してください。',
   'You': 'あなた',
   'Personal items': '個人用の持ち物',
   'Shared items': '共有用の持ち物',
@@ -81,7 +78,7 @@ const baseJa: Record<string, string> = {
   'Something went wrong. Please try again.': 'エラーが発生しました。もう一度お試しください。',
 };
 
-export const japaneseMessages = { ...mergeMessages, ...baseJa, ...extraJa, ...tripMessages, ...nanMessages };
+export const japaneseMessages = { ...mergeMessages, ...baseJa, ...extraJa, ...tripMessages };
 export type Params = Record<string, string | number>;
 export function errorKey(error: unknown, fallback: string) {
   return error instanceof Error && Object.hasOwn(japaneseMessages, error.message) ? error.message : fallback;

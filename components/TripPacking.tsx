@@ -29,7 +29,7 @@ const initialForm = (): Registration => ({ name: '', type: 'personal', targetMem
 export default function TripPacking({ tripId, tripType, packing, managed = false, readOnly = false, roomId = '', userUid, members, bags, legacyItems }: Props) {
   const { t } = useLanguage();
   const uid = userUid || (firebaseConfigured ? '' : 'local-owner');
-  const scope = managed || packing.storage === 'workspace' ? tripId : roomId || `${uid}_${tripId}`;
+  const scope = managed ? tripId : roomId || `${uid}_${tripId}`;
   const { data, error, setError, busy, loaded, roomMembers, cloud, mutate, commitPlan } = packing;
   const [reviewRoster, setReviewRoster] = useState(false);
   const [form, setForm] = useState<Registration>(initialForm);
@@ -130,7 +130,7 @@ export default function TripPacking({ tripId, tripType, packing, managed = false
         <p>{t("Signed-in UID")}: <code>{uid}</code>. {t("You can update your own status. Owners and admins can manage everyone.")}</p>
         {admin && <>
           <button className="soft-button" disabled={disabled} onClick={syncRoster}>{t("Refresh trip members and bags")}</button>
-          {packing.storage !== 'workspace' && cloud && roomId && data.ownerUid === uid && <button className="soft-button" disabled={disabled} onClick={copyPrivateToShared}>{t("Copy private items (3 at a time)")}</button>}
+          {cloud && roomId && data.ownerUid === uid && <button className="soft-button" disabled={disabled} onClick={copyPrivateToShared}>{t("Copy private items (3 at a time)")}</button>}
           <p>{t('Generated quantities follow registered members. Link accounts below for shared editing.')}</p>
           {roster.map(m => <label className="packing-binding" key={m.id}>{m.name}
             <select aria-label={t("Account for {name}", { name: m.name })} value={m.uid} disabled={disabled} onChange={e => {
