@@ -29,6 +29,288 @@ service cloud.firestore {
         && (message.text.size() > 0 || imagePath != '');
     }
 
+
+    function accountUser() {
+      return request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+    function enrolled(id) {
+      return request.auth != null && exists(/databases/$(database)/documents/trips/$(id)/tripMembers/$(request.auth.uid));
+    }
+    function tripManager(id) {
+      return enrolled(id) && get(/databases/$(database)/documents/trips/$(id)/tripMembers/$(request.auth.uid)).data.role in ['owner', 'admin'];
+    }
+    function tripOwner(id) {
+      return enrolled(id) && get(/databases/$(database)/documents/trips/$(id)).data.ownerUid == request.auth.uid;
+    }
+    function usableInvite(data, id) {
+      let parent = get(/databases/$(database)/documents/trips/$(data.tripId)).data;
+      return data.isActive && data.expiresAt > request.time && data.usedCount < data.get('maxUses', 99)
+        && parent.activeInviteId == id && parent.status in ['recruiting', 'confirmed'] && parent.joinedMemberCount < 100;
+    }
+    match /trips/{id} {
+      function validTrip(data) {
+        return data.keys().hasOnly(['id', 'name', 'type', 'destination', 'startDate', 'endDate', 'description', 'plannedMemberCount', 'joinedMemberCount', 'ownerUid', 'ownerName', 'status', 'activeInviteId', 'confirmedMemberIds', 'packingReady', 'createdAt', 'updatedAt'])
+          && data.id == id && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+          && data.type in ['camping', 'domestic', 'overseas', 'hiking', 'beach', 'other']
+          && data.destination is string && data.destination.size() > 0 && data.destination.size() <= 200
+          && data.description is string && data.description.size() <= 2000
+          && data.startDate is string && data.startDate.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+          && data.endDate is string && data.endDate >= data.startDate
+          && data.plannedMemberCount is int && data.plannedMemberCount >= 1 && data.plannedMemberCount <= 100
+          && data.joinedMemberCount is int && data.joinedMemberCount >= 1 && data.joinedMemberCount <= 100
+          && data.ownerUid is string && data.ownerName is string && data.ownerName.size() > 0 && data.ownerName.size() <= 200
+          && data.status in ['draft', 'recruiting', 'confirmed', 'completed'] && data.activeInviteId is string
+          && data.confirmedMemberIds is list && data.confirmedMemberIds.size() <= 100
+          && data.confirmedMemberIds.toSet().size() == data.confirmedMemberIds.size()
+          && data.packingReady is bool && data.createdAt is timestamp && data.updatedAt == request.time;
+      }
+      function joining() {
+        let memberPath = /databases/$(database)/documents/trips/$(id)/tripMembers/$(request.auth.uid);
+        let invitePath = /databases/$(database)/documents/tripInvitations/$(resource.data.activeInviteId);
+        return accountUser() && !exists(memberPath)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['joinedMemberCount', 'updatedAt'])
+          && request.resource.data.joinedMemberCount == resource.data.joinedMemberCount + 1
+          && getAfter(memberPath).data.role == 'member' && getAfter(memberPath).data.invitationId == resource.data.activeInviteId
+          && usableInvite(get(invitePath).data, resource.data.activeInviteId)
+          && getAfter(invitePath).data.usedCount == get(invitePath).data.usedCount + 1
+          && getAfter(invitePath).data.preview.joinedMemberCount == request.resource.data.joinedMemberCount;
+      }
+      function management() {
+        let data = request.resource.data;
+        let changed = data.diff(resource.data).affectedKeys();
+        return tripManager(id) && (
+          (changed.hasOnly(['activeInviteId', 'status', 'updatedAt']) && resource.data.status != 'completed'
+            && (data.status == resource.data.status || (resource.data.status == 'draft' && data.status == 'recruiting'))
+            && (data.activeInviteId == '' || getAfter(/databases/$(database)/documents/tripInvitations/$(data.activeInviteId)).data.tripId == id))
+          || (changed.hasOnly(['status', 'confirmedMemberIds', 'packingReady', 'updatedAt']) && data.status == 'confirmed' && !data.packingReady
+            && resource.data.status != 'completed' && (resource.data.status == 'confirmed' || tripOwner(id))
+            && data.confirmedMemberIds.size() == data.joinedMemberCount && data.ownerUid in data.confirmedMemberIds)
+          || (changed.hasOnly(['packingReady', 'updatedAt']) && data.status == 'confirmed' && data.packingReady)
+          || (changed.hasOnly(['status', 'updatedAt']) && data.status == 'completed' && tripOwner(id)));
+      }
+      allow get: if enrolled(id);
+      allow list: if false;
+      allow create: if accountUser() && validTrip(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid && request.resource.data.status == 'draft'
+        && request.resource.data.joinedMemberCount == 1 && request.resource.data.activeInviteId == ''
+        && request.resource.data.confirmedMemberIds.size() == 0 && !request.resource.data.packingReady
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/trips/$(id)/tripMembers/$(request.auth.uid)).data.role == 'owner';
+      allow update: if accountUser() && validTrip(request.resource.data) && (management() || joining());
+      allow delete: if false;
+      match /tripMembers/{uid} {
+        function validMember(data) {
+          return data.keys().hasOnly(['id', 'uid', 'tripId', 'name', 'role', 'invitationId', 'joinedAt'])
+            && data.id == uid && data.uid == uid && data.tripId == id && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+            && data.role in ['owner', 'admin', 'member'] && data.invitationId is string && data.joinedAt is timestamp;
+        }
+        allow get: if accountUser() && (request.auth.uid == uid || enrolled(id));
+        allow list: if enrolled(id);
+        allow create: if accountUser() && request.auth.uid == uid && validMember(request.resource.data) && request.resource.data.joinedAt == request.time
+          && ((!exists(/databases/$(database)/documents/trips/$(id)) && request.resource.data.role == 'owner'
+              && getAfter(/databases/$(database)/documents/trips/$(id)).data.ownerUid == uid
+              && request.resource.data.invitationId == '')
+            || (request.resource.data.role == 'member'
+              && usableInvite(get(/databases/$(database)/documents/tripInvitations/$(request.resource.data.invitationId)).data, request.resource.data.invitationId)
+              && get(/databases/$(database)/documents/tripInvitations/$(request.resource.data.invitationId)).data.tripId == id
+              && getAfter(/databases/$(database)/documents/tripInvitations/$(request.resource.data.invitationId)).data.usedCount == get(/databases/$(database)/documents/tripInvitations/$(request.resource.data.invitationId)).data.usedCount + 1
+              && getAfter(/databases/$(database)/documents/trips/$(id)).data.joinedMemberCount == get(/databases/$(database)/documents/trips/$(id)).data.joinedMemberCount + 1));
+        allow update: if accountUser() && validMember(request.resource.data)
+          && ((tripOwner(id) && uid != get(/databases/$(database)/documents/trips/$(id)).data.ownerUid
+              && request.resource.data.role in ['admin', 'member'] && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role']))
+            || (request.auth.uid == uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])));
+        allow delete: if false;
+      }
+    }
+    match /tripInvitations/{inviteId} {
+      function validInvite(data) {
+        let parent = getAfter(/databases/$(database)/documents/trips/$(data.tripId)).data;
+        return data.keys().hasOnly(['id', 'tripId', 'code', 'createdBy', 'expiresAt', 'maxUses', 'usedCount', 'isActive', 'createdAt', 'preview'])
+          && data.id == inviteId && inviteId.matches('[A-Z2-9]{16}') && data.code is string && data.code.matches('[A-Z2-9]{4}(-[A-Z2-9]{4}){3}')
+          && data.createdBy == request.auth.uid && data.usedCount == 0 && data.isActive == true
+          && data.createdAt == request.time && data.expiresAt is timestamp && data.expiresAt > request.time
+          && data.expiresAt <= request.time + duration.value(7, 'd') + duration.value(5, 'm')
+          && (!('maxUses' in data) || (data.maxUses is int && data.maxUses >= 1 && data.maxUses <= 99))
+          && data.preview.keys().hasOnly(['name', 'destination', 'startDate', 'endDate', 'ownerName', 'plannedMemberCount', 'joinedMemberCount'])
+          && data.preview.name == parent.name && data.preview.destination == parent.destination
+          && data.preview.startDate == parent.startDate && data.preview.endDate == parent.endDate
+          && data.preview.ownerName == parent.ownerName && data.preview.plannedMemberCount == parent.plannedMemberCount
+          && data.preview.joinedMemberCount == parent.joinedMemberCount && parent.activeInviteId == inviteId && parent.status in ['recruiting', 'confirmed'];
+      }
+      function usingInvite() {
+        let data = request.resource.data;
+        let memberPath = /databases/$(database)/documents/trips/$(resource.data.tripId)/tripMembers/$(request.auth.uid);
+        return usableInvite(resource.data, inviteId) && !exists(memberPath)
+          && data.diff(resource.data).affectedKeys().hasOnly(['usedCount', 'preview'])
+          && data.preview.diff(resource.data.preview).affectedKeys().hasOnly(['joinedMemberCount'])
+          && data.usedCount == resource.data.usedCount + 1 && data.usedCount <= resource.data.get('maxUses', 99)
+          && data.preview.joinedMemberCount == resource.data.preview.joinedMemberCount + 1
+          && getAfter(memberPath).data.invitationId == inviteId && getAfter(memberPath).data.role == 'member'
+          && getAfter(/databases/$(database)/documents/trips/$(resource.data.tripId)).data.joinedMemberCount == data.preview.joinedMemberCount;
+      }
+      allow get: if accountUser() && (!exists(/databases/$(database)/documents/tripInvitations/$(inviteId)) || tripManager(resource.data.tripId) || usableInvite(resource.data, inviteId));
+      allow list: if false;
+      allow create: if accountUser() && tripManager(request.resource.data.tripId) && validInvite(request.resource.data);
+      allow update: if accountUser() && ((tripManager(resource.data.tripId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isActive']) && request.resource.data.isActive == false)
+        || usingInvite());
+      allow delete: if false;
+    }
+    match /users/{uid}/tripMemberships/{id} {
+      allow read: if accountUser() && request.auth.uid == uid;
+      allow create: if accountUser() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['tripId', 'uid', 'joinedAt']) && request.resource.data.tripId == id
+        && request.resource.data.uid == uid && request.resource.data.joinedAt == request.time
+        && existsAfter(/databases/$(database)/documents/trips/$(id)/tripMembers/$(uid));
+      allow update, delete: if false;
+    }
+    // The packing model is independent of the legacy workspace array.
+    match /packingTrips/{tripId} {
+      function signedIn() { return request.auth != null; }
+      function trip() { return get(/databases/$(database)/documents/packingTrips/$(tripId)).data; }
+      function roomMember(roomId, uid) {
+        return roomId != '' && exists(/databases/$(database)/documents/sharedTrips/$(roomId)/members/$(uid));
+      }
+      function participant() {
+        return signedIn() && (trip().get('managedTripId', '') != '' ? enrolled(trip().managedTripId) : (trip().ownerUid == request.auth.uid || roomMember(trip().roomId, request.auth.uid)));
+      }
+      function manager() {
+        return participant() && (trip().get('managedTripId', '') != '' ? tripManager(trip().managedTripId) : (trip().ownerUid == request.auth.uid || request.auth.uid in trip().adminUids));
+      }
+      function writablePacking() {
+        return trip().get('managedTripId', '') == '' || get(/databases/$(database)/documents/trips/$(tripId)).data.status == 'confirmed';
+      }
+      function managerAfterCreate() {
+        let parent = getAfter(/databases/$(database)/documents/packingTrips/$(tripId)).data;
+        return signedIn() && (parent.get('managedTripId', '') != ''
+          ? getAfter(/databases/$(database)/documents/trips/$(parent.managedTripId)/tripMembers/$(request.auth.uid)).data.role in ['owner', 'admin']
+          : (parent.ownerUid == request.auth.uid || (request.auth.uid in parent.adminUids && roomMember(parent.roomId, request.auth.uid))));
+      }
+      function validParent(data) {
+        return data.keys().hasOnly(['sourceTripId', 'roomId', 'ownerUid', 'adminUids', 'bags', 'bagIds', 'createdAt', 'managedTripId'])
+          && (!('managedTripId' in data) || data.managedTripId == tripId)
+          && data.sourceTripId is string && data.roomId is string && data.ownerUid is string
+          && data.adminUids is list && data.adminUids.size() <= 100
+          && data.bags is list && data.bags.size() <= 100
+          && data.bagIds is list && data.bagIds.size() <= 100 && data.createdAt is timestamp;
+      }
+      allow get: if signedIn() && (
+        (!exists(/databases/$(database)/documents/packingTrips/$(tripId)) &&
+          (tripId.matches(request.auth.uid + '_.*') || roomMember(tripId, request.auth.uid))) || participant());
+      allow list: if false;
+      allow create: if signedIn() && validParent(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.adminUids.size() == 0
+        && request.resource.data.createdAt == request.time
+        && ((request.resource.data.get('managedTripId', '') == tripId && request.resource.data.sourceTripId == tripId
+            && request.resource.data.roomId == '' && accountUser()
+            && getAfter(/databases/$(database)/documents/trips/$(tripId)).data.ownerUid == request.auth.uid)
+          || (!('managedTripId' in request.resource.data) && request.resource.data.roomId == '' && tripId == request.auth.uid + '_' + request.resource.data.sourceTripId)
+          || (request.resource.data.roomId == tripId && roomMember(tripId, request.auth.uid)
+            && get(/databases/$(database)/documents/sharedTrips/$(tripId)).data.ownerUid == request.auth.uid));
+      allow update: if manager() && validParent(request.resource.data)
+        && writablePacking()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bags', 'bagIds', 'adminUids'])
+        && (resource.data.get('managedTripId', '') == '' || request.resource.data.adminUids == resource.data.adminUids)
+        && (request.resource.data.adminUids == resource.data.adminUids || resource.data.ownerUid == request.auth.uid);
+      allow delete: if false;
+
+      match /members/{memberId} {
+        function managedMember() {
+          let parent = getAfter(/databases/$(database)/documents/packingTrips/$(tripId)).data;
+          let member = getAfter(/databases/$(database)/documents/trips/$(tripId)/tripMembers/$(memberId)).data;
+          let source = getAfter(/databases/$(database)/documents/trips/$(tripId)).data;
+          return parent.get('managedTripId', '') == tripId && request.resource.data.uid == memberId
+            && request.resource.data.name == member.name && request.resource.data.get('active', true) == true
+            && (memberId in source.confirmedMemberIds || (source.status == 'draft' && member.role == 'owner'));
+        }
+        allow read: if participant();
+        allow create, update: if managerAfterCreate()
+          && request.resource.data.keys().hasOnly(['id', 'name', 'uid', 'active'])
+          && request.resource.data.id == memberId && request.resource.data.name is string
+          && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 200
+          && request.resource.data.uid is string
+          && (!('active' in request.resource.data) || request.resource.data.active is bool)
+          && (getAfter(/databases/$(database)/documents/packingTrips/$(tripId)).data.get('managedTripId', '') != '' ? managedMember() : (request.resource.data.uid == ''
+            || request.resource.data.uid == getAfter(/databases/$(database)/documents/packingTrips/$(tripId)).data.ownerUid
+            || roomMember(getAfter(/databases/$(database)/documents/packingTrips/$(tripId)).data.roomId, request.resource.data.uid)));
+        // Keep historical assignment references valid.
+        allow delete: if false;
+      }
+      match /items/{itemId} {
+        function validTemplate(data) {
+          let t = data.get('template', {});
+          return !('template' in data) || (t is map
+            && t.keys().hasOnly(['id', 'nameKey', 'category', 'type', 'quantityRule', 'quantityPerPerson', 'fixedQuantity', 'capacityPerItem', 'unitKey'])
+            && t.id is string && itemId == 'template-' + t.id
+            && t.nameKey is string && t.category is string && t.unitKey is string && t.type == data.type
+            && ((t.quantityRule == 'per_person' && t.quantityPerPerson is int && t.quantityPerPerson > 0 && t.quantityPerPerson <= 100)
+              || (data.type == 'shared' && t.quantityRule == 'fixed' && t.fixedQuantity is int && t.fixedQuantity > 0 && t.fixedQuantity <= 100)
+              || (data.type == 'shared' && t.quantityRule == 'capacity' && t.capacityPerItem is int && t.capacityPerItem > 0 && t.capacityPerItem <= 100)));
+        }
+        function validItem(data) {
+          return data.keys().hasOnly(['id', 'tripId', 'name', 'type', 'quantity', 'targetMemberIds', 'createdBy', 'createdAt', 'updatedAt', 'template', 'customName'])
+            && (!('customName' in data) || data.customName is bool)
+            && data.id == itemId && data.tripId == tripId
+            && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+            && data.type in ['personal', 'shared'] && validTemplate(data)
+            && data.quantity is int && data.quantity >= 1 && data.quantity <= 10000
+            && data.targetMemberIds is list && data.targetMemberIds.size() <= 100
+            && data.targetMemberIds.toSet().size() == data.targetMemberIds.size()
+            && (trip().get('managedTripId', '') == '' || (get(/databases/$(database)/documents/trips/$(tripId)).data.status == 'confirmed'
+              && data.targetMemberIds.toSet().difference(get(/databases/$(database)/documents/trips/$(tripId)).data.confirmedMemberIds.toSet()).size() == 0))
+            && ((data.type == 'personal' && ((!('template' in data) && data.quantity == 1)
+                || ('template' in data && data.quantity == data.targetMemberIds.size() * data.template.quantityPerPerson)))
+              || (data.type == 'shared' && data.quantity <= 10000 && data.targetMemberIds.size() == 0));
+        }
+        allow read: if participant();
+        allow create: if manager() && validItem(request.resource.data)
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time;
+        allow update: if manager() && validItem(request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'quantity', 'targetMemberIds', 'updatedAt'])
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if manager() && writablePacking();
+      }
+      match /itemAssignments/{assignmentId} {
+        function itemAfter() {
+          return getAfter(/databases/$(database)/documents/packingTrips/$(tripId)/items/$(request.resource.data.itemId)).data;
+        }
+        function validAssignment() {
+          let data = request.resource.data;
+          let item = itemAfter();
+          return data.keys().hasOnly(['id', 'tripId', 'itemId', 'memberId', 'unitNumber', 'status', 'bagId', 'updatedAt'])
+            && data.id == assignmentId && data.tripId == tripId
+            && data.memberId is string && ((data.memberId == '' && item.type == 'shared')
+              || existsAfter(/databases/$(database)/documents/packingTrips/$(tripId)/members/$(data.memberId)))
+            && (trip().get('managedTripId', '') == '' || (get(/databases/$(database)/documents/trips/$(tripId)).data.status == 'confirmed'
+              && (data.memberId == '' || data.memberId in get(/databases/$(database)/documents/trips/$(tripId)).data.confirmedMemberIds)))
+            && data.status in ['not_ready', 'ready', 'packed'] && data.updatedAt == request.time
+            && (!('bagId' in data) || (data.bagId is string && (data.bagId == '' || data.bagId in trip().bagIds)))
+            && ((item.type == 'personal' && !('unitNumber' in data) && data.memberId in item.targetMemberIds
+                && assignmentId == data.itemId + '_' + data.memberId)
+              || (item.type == 'shared' && data.unitNumber is int && data.unitNumber >= 1 && data.unitNumber <= item.quantity
+                && assignmentId == data.itemId + '_unit_' + string(data.unitNumber)));
+        }
+        function assignedToCaller() {
+          let member = get(/databases/$(database)/documents/packingTrips/$(tripId)/members/$(resource.data.memberId)).data;
+          return member.uid == request.auth.uid && member.get('active', true) == true;
+        }
+        function activeAssignee() {
+          return request.resource.data.memberId == '' ||
+            getAfter(/databases/$(database)/documents/packingTrips/$(tripId)/members/$(request.resource.data.memberId)).data.get('active', true) == true;
+        }
+        allow read: if participant();
+        allow create: if manager() && validAssignment() && activeAssignee();
+        allow update: if participant() && validAssignment()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'bagId', 'memberId', 'updatedAt'])
+          && (request.resource.data.memberId == resource.data.memberId || activeAssignee())
+          && ((manager() && (request.resource.data.memberId == resource.data.memberId || itemAfter().type == 'shared'))
+            || (assignedToCaller() && request.resource.data.memberId == resource.data.memberId));
+        allow delete: if manager() && writablePacking();
+      }
+    }
+
     match /users/{userId}/workspace/{docId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
