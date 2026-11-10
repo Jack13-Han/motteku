@@ -154,5 +154,5 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
     finally { saving.current = false; setBusy(false); }
   }
 
-  return { data, error, setError, busy, loaded: loaded && dataScope === scope, roomMembers, cloud, mutate, commitPlan };
+  return { data, error, setError, busy, loaded: loaded && dataScope === scope, roomMembers, cloud, mutate, commitPlan, storage: 'collections' as 'collections' | 'workspace' };
 }

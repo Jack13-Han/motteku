@@ -6,16 +6,17 @@ import type { ItemTemplate } from '@/lib/packing';
 
 export type PackingDraftItem = { id: string; name: string; quantity: number; template?: ItemTemplate };
 
-export default function PackingPreview({ items, setItems, onConfirm, onCancel }: {
+export default function PackingPreview({ items, setItems, onConfirm, onCancel, busy = false }: {
   items: PackingDraftItem[];
   setItems: (items: PackingDraftItem[]) => void;
   onConfirm: () => void;
   onCancel: () => void;
+  busy?: boolean;
 }) {
   const { t } = useLanguage();
   const [name, setName] = useState('');
   const valid = items.length > 0 && items.every(item => (item.name.trim() || item.template) && Number.isSafeInteger(item.quantity) && item.quantity > 0 && (item.template || item.quantity <= 100));
-  return <section className="advice-results" aria-label={t('Packing list preview')}>
+  return <section className="advice-results" aria-label={t('Packing list preview')} aria-busy={busy}><fieldset className="trip-details" disabled={busy}>
     <h4>{t('Packing list preview')}</h4>
     <p>{t('Review, add or remove items and adjust quantities. Your trip is saved only after confirmation.')}</p>
     {(['personal', 'shared'] as const).map(type => <section key={type}>
@@ -30,8 +31,8 @@ export default function PackingPreview({ items, setItems, onConfirm, onCancel }:
       <button className="soft-button" type="submit" disabled={!name.trim()}>{t('Add item')}</button>
     </form>
     <div className="bottom-actions">
-      <button type="button" className="primary" disabled={!valid} onClick={onConfirm}>{t('Confirm and save trip')}</button>
+      <button type="button" className="primary" disabled={busy || !valid} onClick={onConfirm}>{t(busy ? 'Saving…' : 'Confirm and save trip')}</button>
       <button type="button" className="soft-button" onClick={onCancel}>{t('Back to trip details')}</button>
     </div>
-  </section>;
+  </fieldset></section>;
 }
