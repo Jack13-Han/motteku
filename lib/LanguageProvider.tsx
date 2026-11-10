@@ -15,10 +15,11 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let saved: string | null = null;
     try { saved = localStorage.getItem('motteku-language'); } catch { /* Storage may be disabled. */ }
-    setLanguageState(resolveLanguage(saved, navigator.languages?.length ? navigator.languages : [navigator.language]));
+    // Start in Japanese until the user explicitly chooses a language.
+    setLanguageState(resolveLanguage(saved, []));
     setLoaded(true);
     const sync = (event: StorageEvent) => {
-      if (event.key === 'motteku-language') setLanguageState(resolveLanguage(event.newValue, navigator.languages));
+      if (event.key === 'motteku-language') setLanguageState(resolveLanguage(event.newValue, []));
     };
     window.addEventListener('storage', sync);
     return () => window.removeEventListener('storage', sync);
