@@ -20,6 +20,7 @@ import { usePacking } from '@/lib/usePacking';
 import { isCurrentAssignment, packingItemName, reconcilePacking, requiredQuantity, type TemplateSelection } from '@/lib/packing';
 import { packingTemplates } from '@/lib/packingTemplates';
 import MemberRemovalDialog from '@/components/MemberRemovalDialog';
+import { checklistNames, customChecklistFallback, localTripDate, removeWorkspaceTrip, tripCreationError } from '@/lib/tripCreation';
 
 type ItemStatus = 'Owned' | 'Need to buy' | 'Purchased' | 'Packed';
 type Item = { quantity?:number; id:string; name:string; category:string; status:ItemStatus; assignee:string; weight:number; price:number; paidBy:string; comment:string; dueDate:string; receiptUrl:string; bagId?:string; bagLocation?:string };
@@ -64,6 +65,8 @@ export default function Home(){
  const [draftLoading,setDraftLoading]=useState(false);
  const [draftError,setDraftError]=useState('');
  const active=workspace.trips.find(t=>t.id===workspace.activeTripId) || workspace.trips[0];
+ const minTripDate=localTripDate();
+ const minEndDate=newStart>minTripDate?newStart:minTripDate;
  const packingUid=user?.uid || (firebaseConfigured ? '' : 'local-owner');
  const packingScope=ready && active && packingUid ? active.sharedChatId || packingUid + '_' + active.id : '';
  const packing=usePacking(packingScope,active?.id || '',active?.sharedChatId || '',packingUid,active?.members || [],active?.bags || []);
@@ -75,14 +78,14 @@ export default function Home(){
  const setAdvice=(result:any)=>setAdviceByLanguage(current=>({...current,[adviceKey]:result}));
  const updateTrip=(fn:(trip:Trip)=>Trip)=>setWorkspace(w=>({...w,trips:w.trips.map(t=>t.id===w.activeTripId?fn(t):t)}));
  useEffect(()=>{
-   if(!firebaseConfigured || !auth || !db){try{const saved=localStorage.getItem('motteku-workspace');if(saved){const parsed=normalizeWorkspace(JSON.parse(saved));if(parsed.trips?.length)setWorkspace(parsed);}}catch{}setReady(true);return;}
+   if(!firebaseConfigured || !auth || !db){try{const saved=localStorage.getItem('motteku-workspace');if(saved){const parsed=normalizeWorkspace(JSON.parse(saved));if(Array.isArray(parsed.trips))setWorkspace(parsed);}}catch{}setReady(true);return;}
    const unsubscribe=onAuthStateChanged(auth, u=>{setUser(u);if(!u && !skipAnonymousSignIn.current)signInAnonymously(auth!).catch(e=>{console.error(e);setNotice('Firebase sign-in failed. Check that Anonymous Authentication is enabled.');setReady(true);});});
    return ()=>unsubscribe();
  },[]);
  useEffect(()=>{
    if(!firebaseConfigured || !db || !user)return;
    const ref=doc(db,'users',user.uid,'workspace','main');
-   const unsubscribe=onSnapshot(ref,snap=>{if(snap.exists()){const data=normalizeWorkspace(snap.data());if(data.trips?.length)setWorkspace(data);}setRemoteLoaded(true);setReady(true);},()=>{try{const saved=localStorage.getItem('motteku-workspace');if(saved){const parsed=normalizeWorkspace(JSON.parse(saved));if(parsed.trips?.length)setWorkspace(parsed);}}catch{}setRemoteError(true);setNotice('Firebase access was denied. Using local demo mode; publish firestore.rules in the matching Firebase project to restore cloud sync.');setRemoteLoaded(true);setReady(true);});
+   const unsubscribe=onSnapshot(ref,snap=>{if(snap.exists()){const data=normalizeWorkspace(snap.data());if(Array.isArray(data.trips))setWorkspace(data);}setRemoteLoaded(true);setReady(true);},()=>{try{const saved=localStorage.getItem('motteku-workspace');if(saved){const parsed=normalizeWorkspace(JSON.parse(saved));if(Array.isArray(parsed.trips))setWorkspace(parsed);}}catch{}setRemoteError(true);setNotice('Firebase access was denied. Using local demo mode; publish firestore.rules in the matching Firebase project to restore cloud sync.');setRemoteLoaded(true);setReady(true);});
    return ()=>unsubscribe();
  },[user]);
  useEffect(()=>{if(!ready)return;if(firebaseConfigured&&db&&user&&!remoteError){if(!remoteLoaded)return;const ref=doc(db,'users',user.uid,'workspace','main');setDoc(ref,workspace,{merge:true}).catch(()=>{setRemoteError(true);setNotice('Firebase access was denied. Using local demo mode; publish firestore.rules in the matching Firebase project to restore cloud sync.');});}else{try{localStorage.setItem('motteku-workspace',JSON.stringify(workspace));}catch{}}},[workspace,ready,user,remoteLoaded,remoteError]);
@@ -92,11 +95,25 @@ export default function Home(){
  const stats=useMemo(()=>{if(!active)return {total:0,packed:0,need:0,weight:0,spent:0};return {total:active.items.length+currentPackingRows.length,packed:active.items.filter(i=>i.status==='Packed').length+currentPackingRows.filter(a=>a.status==='packed').length,need:active.items.filter(i=>i.status==='Need to buy').length,weight:active.items.reduce((s,i)=>s+(Number(i.weight)||0),0),spent:active.items.reduce((s,i)=>s+((['Purchased','Packed'].includes(i.status)?Number(i.price)||0:0)),0)}},[active,packing.data,packing.loaded]);
  const addTrip=async()=>{
    if(draftLoading)return;
-   if(!newLocation.trim()||!newStart||!newEnd||newEnd<newStart||!newTravelers.length||newTravelers.length>100||newTravelers.some(name=>name.length>200)){setDraftError('Enter a destination, valid dates and 1–100 member names.');return;}
+   const inputType=newType.trim();
+   const type=Object.keys(packingTemplates).find(key=>key.toLocaleLowerCase()===inputType.toLocaleLowerCase()||tr(key)===inputType)||inputType;
+   const validation=tripCreationError({type,destination:newLocation,startDate:newStart,endDate:newEnd,members:newTravelers});
+   if(validation){setDraftError(validation);return;}
    setDraftLoading(true);setDraftError('');
    try{
-     const trip:Trip={id:uid(),name:newName.trim()||tr(newType),type:newType,location:newLocation.trim(),startDate:newStart,endDate:newEnd,prepStartDate:newStart,people:newTravelers.length,budget:Number(newBudget)||0,members:newTravelers.map(name=>({id:uid(),name})),items:[],expenses:[],bags:[],createdAt:new Date().toISOString()};
-     setDraftItems((packingTemplates[trip.type]||[]).map(template=>({id:template.id,name:'',quantity:requiredQuantity(template,trip.members.length),template})));
+     const trip:Trip={id:uid(),name:newName.trim()||tr(type),type,location:newLocation.trim(),startDate:newStart,endDate:newEnd,prepStartDate:newStart,people:newTravelers.length,budget:Number(newBudget)||0,members:newTravelers.map(name=>({id:uid(),name})),items:[],expenses:[],bags:[],createdAt:new Date().toISOString()};
+     if(packingTemplates[type])setDraftItems(packingTemplates[type].map(template=>({id:template.id,name:'',quantity:requiredQuantity(template,trip.members.length),template})));
+     else{
+       let names=customChecklistFallback.map(name=>tr(name));
+       try{
+         const response=await fetch('/api/advice',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(20000),body:JSON.stringify({mode:'checklist',language,trip:{name:trip.name,type,location:trip.location,startDate:trip.startDate,endDate:trip.endDate,people:trip.people},weather:null,items:[]})});
+         const data=await response.json();
+         const generated=checklistNames(data.result?.suggestedItems);
+         if(!response.ok||!data.configured||!generated.length)throw new Error('Could not generate checklist.');
+         names=generated;
+       }catch{setDraftError('AI checklist is unavailable. Review the starter items or add your own.');}
+       setDraftItems(names.map(name=>({id:uid(),name,quantity:1})));
+     }
      setTripDraft(trip);
    }catch(error){setDraftError(errorKey(error,'Suggestions could not be generated.'));}
    finally{setDraftLoading(false);}
@@ -167,6 +184,12 @@ export default function Home(){
  useEffect(()=>{setWeather(null);},[active?.id]);
  useEffect(()=>{if(active && tab==='Weather & AI' && !advice && Object.keys(adviceByLanguage).some(key=>key.startsWith(active.id + ':')) && !autoAdviceRequests.current.has(adviceKey)) void getAdvice();},[language,adviceByLanguage,active?.id,tab]);
  const finishTrip=()=>{setWorkspace(w=>({...w,history:[{...active,members:travelMembers.map(m=>({id:m.id,name:m.name})),people:travelMembers.length,pendingPacking:templateSelections},...w.history],trips:w.trips.filter(t=>t.id!==active.id),activeTripId:w.trips.find(t=>t.id!==active.id)?.id||''}));setNotice('Trip moved to history.');};
+ const deleteActiveTrip=()=>{
+   if(!active||!window.confirm(tr('Remove this trip from your workspace? Shared chats and other members are kept.')))return;
+   const id=active.id;
+   setWorkspace(current=>removeWorkspaceTrip(current,id));
+   setTab('Overview');setNotice('Trip deleted.');
+ };
   const handleJoinedChat = (roomId: string, code: string, roomName: string) => {
     setWorkspace((current) => {
       const existing = current.trips.find((trip) => trip.sharedChatId === roomId);
@@ -232,7 +255,21 @@ export default function Home(){
     } catch {}
     if (pending) setTab("Group chat");
   }, []);
- const tripCreationForm = <section className="panel create-panel" id="create-trip"><div className="panel-head"><div><h3 id="create-trip-title">{tr("Create a new trip")}</h3><p>{tr("Enter trip details and member names, then review calculated quantities.")}</p></div><Plus className="muted-icon"/></div><fieldset disabled={draftLoading || !!tripDraft} className="trip-details"><form className="create-form" onSubmit={e=>{e.preventDefault();addTrip()}}><label>{tr("Trip name")}<input value={newName} onChange={e=>setNewName(e.target.value)} placeholder={tr("e.g. Summer beach trip")}/></label><label>{tr("Trip type")}<select value={newType} onChange={e=>setNewType(e.target.value)}>{Object.keys(templates).map(t=><option key={t} value={t}>{tr(t)}</option>)}</select></label><label>{tr("Destination")}<input value={newLocation} onChange={e=>setNewLocation(e.target.value)} placeholder={tr("Example: Osaka, Japan")}/></label><label>{tr("Start date")}<input type="date" value={newStart} onChange={e=>setNewStart(e.target.value)}/></label><label>{tr("End date")}<input type="date" min={newStart} value={newEnd} onChange={e=>setNewEnd(e.target.value)}/></label><label>{tr("Group budget (¥)")}<input type="number" min="0" value={newBudget} onChange={e=>setNewBudget(e.target.value)}/></label><label>{tr("Participant names (one per line)")}<textarea required value={newMemberNames} onChange={e=>setNewMemberNames(e.target.value)} placeholder={tr("Example member names")}/><small>{tr("Members: {count}",{count:newTravelers.length})}</small></label><button className="primary" type="submit" disabled={draftLoading}>{draftLoading?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} {tr(draftLoading?'Generating suggestions...':'Generate template preview')}</button></form></fieldset>{draftError&&<p role="status">{tr(draftError)}</p>}{tripDraft&&<PackingPreview items={draftItems} setItems={setDraftItems} onConfirm={confirmTrip} onCancel={()=>{setTripDraft(null);setDraftItems([]);setDraftError('');}}/>}</section>;
+ const tripCreationForm = <section className="panel create-panel" id="create-trip">
+   <div className="panel-head"><div><h3 id="create-trip-title">{tr('Create a new trip')}</h3><p>{tr('Choose a template or enter a custom trip type. Review the checklist before saving.')}</p></div><Plus className="muted-icon"/></div>
+   <fieldset disabled={draftLoading || !!tripDraft} className="trip-details"><form className="create-form" onSubmit={e=>{e.preventDefault();void addTrip();}}>
+     <label>{tr('Trip name')}<input maxLength={200} value={newName} onChange={e=>setNewName(e.target.value)} placeholder={tr('e.g. Summer beach trip')}/></label>
+     <label>{tr('Trip type')}<input value={newType} onChange={e=>setNewType(e.target.value)} list="trip-type-options" required maxLength={60} placeholder={tr('Choose or enter a trip type')}/><datalist id="trip-type-options">{Object.keys(templates).map(type=><option key={type} value={type} label={tr(type)}/>)}</datalist></label>
+     <label>{tr('Destination')}<input required maxLength={200} value={newLocation} onChange={e=>setNewLocation(e.target.value)} placeholder={tr('Example: Osaka, Japan')}/></label>
+     <label>{tr('Start date')}<input type="date" required min={minTripDate} value={newStart} onChange={e=>{const value=e.target.value;if(value&&value<minTripDate){setDraftError('Start date must be today or later.');return;}setNewStart(value);if(value&&newEnd<value)setNewEnd(value);setDraftError('');}}/></label>
+     <label>{tr('End date')}<input type="date" required min={minEndDate} value={newEnd} onChange={e=>{const value=e.target.value;if(value&&value<minEndDate){setDraftError('End date must be on or after the start date.');return;}setNewEnd(value);setDraftError('');}}/></label>
+     <label>{tr('Group budget (¥)')}<input type="number" min="0" value={newBudget} onChange={e=>setNewBudget(e.target.value)}/></label>
+     <label>{tr('Participant names (one per line)')}<textarea required value={newMemberNames} onChange={e=>setNewMemberNames(e.target.value)} placeholder={tr('Example member names')}/><small>{tr('Members: {count}',{count:newTravelers.length})}</small></label>
+     <button className="primary" type="submit" disabled={draftLoading}>{draftLoading?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} {tr(draftLoading?'Generating checklist…':packingTemplates[newType.trim()]?'Generate template preview':'Generate checklist preview')}</button>
+   </form></fieldset>
+   {draftError&&<p role="status">{tr(draftError)}</p>}
+   {tripDraft&&<PackingPreview items={draftItems} setItems={setDraftItems} onConfirm={confirmTrip} onCancel={()=>{setTripDraft(null);setDraftItems([]);setDraftError('');}}/>}
+ </section>;
  const nav=[['Overview',CalendarDays],['Packing list',ListChecks],['Bags & photos',ClipboardCheck],['Group chat',MessageCircle],['Reminders',CalendarDays],['Members',Users],['Budget',Wallet],['Weather & AI',CloudSun],['History',History]] as const;
  if(!ready)return <main className="loading"><LoaderCircle className="spin" size={28}/> {tr('Loading Motteku…')}</main>;
   return <main className="app-shell">
@@ -399,7 +436,7 @@ export default function Home(){
   {memberToRemove && packing.loaded && packing.data && travelMembers.length>1 && <MemberRemovalDialog data={packing.data} next={reconcilePacking(packing.data,travelMembers.filter(m=>m.id!==memberToRemove.id),packingScope,packingUid)} removed={packing.data.members.filter(m=>m.id===memberToRemove.id)} legacyCount={active.items.filter(i=>i.assignee===memberToRemove.name).length} busy={packing.busy} onCancel={()=>setMemberToRemove(null)} onConfirm={()=>void confirmMemberRemoval()}/>}
   {!active&&tab!=='History'&&tab!=='Group chat'?<section className="empty-state"><TentTree size={42}/><h2>{tr("Ready to plan your next trip?")}</h2><p>{tr("Create a trip below to start your packing list.")}</p></section>:active&&<>
   {tab==='Overview'&&<>
-   <section className="hero-card"><div className="hero-copy"><span className="pill"><span className="pill-dot"/>{tr(active.type).toUpperCase()} {tr('PLAN')}</span><h2>{active.name}</h2><p><CalendarDays size={16}/>{date(active.startDate)} → {date(active.endDate)}</p><p><Cloud size={16}/>{active.location}</p><div className="hero-buttons"><button className="light-button" onClick={()=>setTab('Packing list')}><ListChecks size={16}/> {tr("Open checklist")}</button></div></div><div className="hero-art"><div className="sun"/><div className="mountain mountain-back"/><div className="mountain mountain-front"/><div className="tiny-tent"><span/></div></div></section>
+   <section className="hero-card"><div className="hero-copy"><span className="pill"><span className="pill-dot"/>{tr(active.type).toUpperCase()} {tr('PLAN')}</span><h2>{active.name}</h2><p><CalendarDays size={16}/>{date(active.startDate)} → {date(active.endDate)}</p><p><Cloud size={16}/>{active.location}</p><div className="hero-buttons"><button className="light-button" onClick={()=>setTab('Packing list')}><ListChecks size={16}/> {tr("Open checklist")}</button><button className="history-delete" onClick={deleteActiveTrip}><Trash2 size={16}/> {tr('Delete trip')}</button></div></div><div className="hero-art"><div className="sun"/><div className="mountain mountain-back"/><div className="mountain mountain-front"/><div className="tiny-tent"><span/></div></div></section>
    <div className="stats-grid"><Stat icon={<ListChecks/>} label={tr("Packing progress")} value={`${stats.packed}/${stats.total}`} sub={`${stats.total?Math.round(stats.packed/stats.total*100):0}% ${tr('packed')}`} color="purple"/><Stat icon={<ShoppingCart/>} label={tr("Still to buy")} value={String(stats.need)} sub={tr("items on your list")} color="orange"/><Stat icon={<Weight/>} label={tr("Total item weight")} value={`${stats.weight.toFixed(1)} kg`} sub={tr("across all items")} color="blue"/><Stat icon={<Wallet/>} label={tr("Purchased total")} value={yen(stats.spent)} sub={`${tr('budget')} ${yen(active.budget)}`} color="green"/></div>
    <div className="content-grid"><section className="panel"><div className="panel-head"><div><h3>{tr("Pack your essentials")}</h3><p>{tr("Check off items as your group gets ready.")}</p></div><button className="text-button" onClick={()=>setTab('Packing list')}>{tr("View all")} <span>→</span></button></div><div className="progress-line"><span style={{width:`${stats.total?stats.packed/stats.total*100:0}%`}}/></div><div className="item-list">{packing.loaded && packing.data && packing.data.items.length>0 && <><p>{tr('Open the checklist to update each member or shared unit.')}</p>{packing.data.items.slice(0,5).map(item=><div className="quick-item" key={item.id}><span>{packingItemName(item,tr)}</span><small>{tr(item.type==='personal'?'Personal':'Shared')}</small><button className="text-button" onClick={()=>setTab('Packing list')}>{tr('Open checklist')}</button></div>)}</>}{active.items.slice(0,6).map(i=><div className="quick-item" key={i.id}><button className={`check-circle ${i.status==='Packed'?'checked':''}`} onClick={()=>changeStatus(i.id,i.status==='Packed'?'Owned':'Packed')}>{i.status==='Packed'&&<Check size={14}/>}</button><span className={i.status==='Packed'?'muted strike':''}>{i.name}</span><small>{i.assignee==='Unassigned'?tr('Unassigned'):i.assignee}</small><select value={i.status} onChange={e=>changeStatus(i.id,e.target.value as ItemStatus)} aria-label={tr("Status: {name}",{name:i.name})}>{(['Owned','Need to buy','Purchased','Packed'] as ItemStatus[]).map(s=><option key={s} value={s}>{tr(s)}</option>)}</select></div>)}</div></section><section className="panel"><div className="panel-head"><div><h3>{tr("Trip details")}</h3><p>{tr("Keep the essentials in one place.")}</p></div><CalendarDays size={20} className="muted-icon"/></div><div className="detail-list"><Detail label={tr("Destination")} value={active.location}/><Detail label={tr("Trip type")} value={tr(active.type)}/><Detail label={tr("Group size")} value={`${travelMembers.length} ${tr("members")}`}/><Detail label={tr("Budget per person")} value={yen(active.budget/Math.max(1,travelMembers.length))}/></div><div className="member-row">{travelMembers.slice(0,5).map((m,i)=><span className={`avatar avatar-${i%5}`} key={m.id} title={m.name}>{m.name.slice(0,1).toUpperCase()}</span>)}<button className="add-avatar" onClick={()=>setTab('Members')}><Plus size={15}/></button><span className="member-caption">{travelMembers.length} {tr("travelers")}</span></div><button className="wide-soft" onClick={()=>setTab('Members')}>{tr("Manage group members")} <span>→</span></button></section></div>
   </>}
