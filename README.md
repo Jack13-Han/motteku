@@ -24,6 +24,12 @@ Demo mode stores data in your browser's localStorage. It does not sync between d
 5. In Firestore Rules, paste the contents of `firestore.rules` and publish.
 6. Restart the dev server (`Ctrl+C`, then `npm run dev`).
 
+### Group chat: text, replies and reactions
+
+Group chat uses Firebase Authentication and Cloud Firestore. Photos are no longer supported. Reply to a message using its Reply button; choose one of the five reactions (👍 Like, 😡 Angry, 👌 OK, 😂 Haha, 😢 Sad). Click your selected reaction again to remove it, or choose another to change it.
+
+Publish the updated `firestore.rules` before using replies and reactions; no Firebase Storage bucket or Blaze upgrade is needed for these chat features. Follow [CHAT_SETUP.md](CHAT_SETUP.md) for setup and two-account checks. Run `node --test tests/chat-interactions.test.cjs` to check the actual component handlers with mocked transports; chat security cases are included in the Firestore emulator suite.
+
 This prototype stores the signed-in anonymous user's workspace at `users/{uid}/workspace/main`. The included rules restrict each user's workspace to that user's UID. For real multi-member sharing, implement explicit trip membership and more granular security rules before production; this MVP's anonymous workspace is not a complete shared-trip invitation system.
 
 ## Enable Gemini AI advice (optional)
@@ -42,7 +48,7 @@ The server route calls Open-Meteo. The UI geocodes the city entered in the trip 
 - Expense entries are held in page state and are not yet persisted with the trip workspace or shared with other devices.
 - Firebase sync uses one anonymous user's workspace; real invite links, multi-user access, and member roles are future work.
 - Receipt image upload is not implemented yet; `receiptUrl` is reserved in the item data model.
-- Notifications, push reminders, and full chat are not implemented. Item comments are available in the packing list.
+- Browser-closed push reminders are not implemented. Group chat supports text, replies and five reactions; chat photo upload is disabled.
 - This is a school-project MVP, not a production-ready service. Add tests, validation, rate limiting, and production security review before deployment.
 
 ## Build check

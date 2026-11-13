@@ -11,6 +11,8 @@ import { templateTripTypes } from '@/lib/trips';
 import { completeTrip, confirmMembers, disableInvitation, issueInvitation, markPackingReady, setMemberRole } from '@/lib/tripService';
 import TripWorkflowFrame from './TripWorkflowFrame';
 import TripPacking from './TripPacking';
+import WeatherAdvice from './WeatherAdvice';
+import { addAdviceItem } from '@/lib/addAdviceItem';
 import { Button } from './ui/button';
 
 const statusLabels = { draft: 'Draft', recruiting: 'Recruiting', confirmed: 'Confirmed', completed: 'Completed' };
@@ -65,6 +67,14 @@ export default function TripWorkspace({ tripId }: { tripId: string }) {
           {trip.status === 'confirmed' && !trip.packingReady && !changed && manager && <><p>{t('Checklist generation is not finished. Resume without resetting existing checks.')}</p><Button disabled={locked || !packing.loaded} onClick={() => setReview(true)}>{t('Resume generation')}</Button></>}
         </section>
       </div>
+      <WeatherAdvice
+        key={trip.id}
+        trip={{id:trip.id,name:trip.name,type:templateTripTypes[trip.type],location:trip.destination,startDate:trip.startDate,endDate:trip.endDate,people:members.length}}
+        items={(packing.loaded ? packing.data?.items || [] : []).map(item=>({name:packingItemName(item,t),type:item.type,quantity:item.quantity}))}
+        onAddItem={(name,type)=>addAdviceItem(controller,tripId,user?.uid || '',name,type)}
+        canAddItems={manager && trip.status === 'confirmed' && trip.packingReady && packing.loaded && !locked}
+        adding={locked}
+      />
       {review && next && packing.data && <div className="member-removal-backdrop"><section className="panel page-panel member-removal-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-members-title">
         <h2 id="confirm-members-title">{t(trip.status === 'confirmed' ? 'Review recalculation' : 'Confirm members')}</h2>
         <p>{t('Planned: {count}', { count: trip.plannedMemberCount })} · {t('Joined: {count}', { count: members.length })}</p>
