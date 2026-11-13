@@ -26,8 +26,8 @@ function load(relative) {
 
 const { POST } = load('app/api/advice/route.ts');
 const { checklistItems } = load('lib/checklist.ts');
-const { translate } = load('lib/messages.ts');
-const trip = { name: 'Offline camping test', type: 'Camping', location: 'Tokyo, Japan', people: 3 };
+const { normalizeAdviceInput } = load('lib/advice.ts');
+const trip = { name: 'Offline camping test', type: 'Camping', location: 'Tokyo, Japan', startDate: '', endDate: '', people: 3 };
 const checklist = (patch = {}) => ({ mode: 'checklist', language: 'en', trip: { ...trip }, ...patch });
 const generated = result => Response.json({ candidates: [{ content: { parts: [{ text: typeof result === 'string' ? result : JSON.stringify(result) }] } }] });
 
@@ -70,7 +70,7 @@ test('checklist validates the trip type before contacting Gemini', async () => {
   assert.equal(missingTrip.calls.length, 0);
 });
 
-test('a valid checklist request without an API key keeps the existing unconfigured response', async () => {
+test('a no-key checklist returns usable localized built-in items without provider access', async () => {
   // Exercise the unconfigured branch even if a developer has a key in the environment.
   const oldKey = process.env.GEMINI_API_KEY;
   const oldFetch = globalThis.fetch;
@@ -80,7 +80,11 @@ test('a valid checklist request without an API key keeps the existing unconfigur
   try {
     const response = await POST(new Request('http://localhost/api/advice', { method: 'POST', body: JSON.stringify(checklist()) }));
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { configured: false, advice: null });
+    const body = await response.json();
+    assert.equal(body.configured, false);
+    assert.equal(body.source, 'built-in');
+    assert.equal(body.reason, 'not-configured');
+    assert.ok(body.result.suggestedItems.length > 0);
     assert.equal(calls, 0);
   } finally {
     globalThis.fetch = oldFetch;
@@ -123,28 +127,31 @@ test('pure checklist helper preserves the first original spelling and rejects no
   assert.deepEqual(checklistItems([false, {}, null, '', 'x'.repeat(201)]), []);
 });
 
-test('unusable generated checklist payloads return 502 instead of success with an empty list', async () => {
+test('unusable generated checklists return usable built-in results instead of empty success', async () => {
   for (const suggestedItems of [undefined, null, 'Tent', {}, [], ['', 2, null, 'x'.repeat(201)]]) {
     const response = await request(checklist({ language: 'ja' }), () => generated({ advice: 'No useful items', suggestedItems }));
-    assert.equal(response.status, 502);
-    assert.equal(response.body.error, 'The AI did not return a usable checklist. Please try again.');
-    assert.equal(response.body.message, translate('ja', response.body.error));
-    assert.notEqual(response.body.message, response.body.error);
-    assert.equal(response.body.result, undefined);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.source, 'built-in');
+    assert.equal(response.body.reason, 'unavailable');
+    assert.ok(response.body.result.suggestedItems.length > 0);
+    assert.match(response.body.result.advice, /[\u3040-\u30ff\u4e00-\u9fff]/);
   }
 });
 
-test('malformed model JSON is rejected for checklists while normal advice keeps main fallback behavior', async () => {
+test('malformed model JSON uses the robust fallback for both checklist and normal advice', async () => {
   const invalidText = '{"advice":"unfinished"';
   const list = await request(checklist(), () => generated(invalidText));
-  assert.equal(list.status, 502);
-  assert.equal(list.body.result, undefined);
-  const advice = await request({ language: 'en', trip }, () => generated(invalidText));
+  assert.equal(list.status, 200);
+  assert.equal(list.body.source, 'built-in');
+  assert.ok(list.body.result.suggestedItems.length > 0);
+  const advice = await request({ language: 'en', trip, weather: null, items: [] }, () => generated(invalidText));
   assert.equal(advice.status, 200);
-  assert.deepEqual(advice.body, { configured: true, result: { advice: invalidText, suggestedItems: [], cautions: [] } });
+  assert.equal(advice.body.source, 'built-in');
+  assert.ok(advice.body.result.suggestedItems.length > 0);
+  assert.notEqual(advice.body.result.advice, invalidText);
 });
 
-test('normal main advice retains its localized prompt and response shape without checklist filtering', async () => {
+test('normal Weather advice retains localized prompts and robust typed deduplicated results', async () => {
   const result = { advice: 'Existing behavior', suggestedItems: ['  Tent  ', 'Tent'], cautions: ['Remember water'], extra: 'unchanged' };
   for (const [language, expected] of [['ja', 'Japanese'], ['en', 'English']]) {
     const response = await request({ language, trip, items: [{ name: 'Water bottle' }] }, (_url, init) => {
@@ -155,29 +162,46 @@ test('normal main advice retains its localized prompt and response shape without
       return generated(result);
     });
     assert.equal(response.status, 200);
-    assert.deepEqual(response.body, { configured: true, result });
+    assert.equal(response.body.configured, true);
+    assert.equal(response.body.source, 'gemini');
+    assert.deepEqual(response.body.result, { advice: result.advice, suggestedItems: ['Tent'], cautions: result.cautions });
   }
 });
 
-test('provider errors return translated generic messages without exposing provider details or the key', async () => {
+test('provider errors return localized built-in checklists without exposing provider details or the key', async () => {
   for (const language of ['ja', 'en']) {
     const response = await request(checklist({ language }), () => Response.json({ error: { message: 'DO-NOT-EXPOSE provider project details offline-dummy-key', status: 'RESOURCE_EXHAUSTED' } }, { status: 429 }));
-    assert.equal(response.status, 502);
-    assert.equal(response.body.error, 'Gemini request failed.');
-    assert.equal(response.body.message, translate(language, 'Gemini request failed.'));
-    if (language === 'ja') assert.notEqual(response.body.message, response.body.error);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.source, 'built-in');
+    assert.equal(response.body.reason, 'unavailable');
+    assert.ok(response.body.result.suggestedItems.length > 0);
+    if (language === 'ja') assert.match(response.body.result.advice, /[\u3040-\u30ff\u4e00-\u9fff]/);
     assert.doesNotMatch(JSON.stringify(response.body), /DO-NOT-EXPOSE|offline-dummy-key|RESOURCE_EXHAUSTED/);
   }
 });
 
-test('provider requests carry a live cancellation signal and network failure remains a controlled main error', async () => {
-  const response = await request(checklist(), (_url, init) => {
+test('provider keys stay in headers and network failure uses the bounded robust fallback', async () => {
+  const response = await request(checklist(), (url, init) => {
     assert.ok(init.signal instanceof AbortSignal);
     assert.equal(init.signal.aborted, false);
     assert.equal(init.cache, 'no-store');
+    assert.equal(init.headers['x-goog-api-key'], 'offline-dummy-key');
+    assert.doesNotMatch(String(url), /offline-dummy-key|\?key=/);
     throw new TypeError('offline-dummy-key transport failed');
   });
-  assert.equal(response.status, 500);
-  assert.deepEqual(response.body, { configured: true, error: 'Could not generate advice.' });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.source, 'built-in');
+  assert.ok(response.body.result.suggestedItems.length > 0);
   assert.doesNotMatch(JSON.stringify(response.body), /offline-dummy-key|transport/);
+});
+
+test('minimal Nan checklist requests receive safe defaults without invented weather or dates', () => {
+  const input = normalizeAdviceInput({ mode: 'checklist', trip: { type: 'Museum visit' } });
+  assert.equal(input.mode, 'checklist');
+  assert.equal(input.language, 'ja');
+  assert.deepEqual(input.trip, { name: 'Museum visit', type: 'Museum visit', location: '', startDate: '', endDate: '', people: 1 });
+  assert.equal(input.weather, null);
+  assert.deepEqual(input.items, []);
+  assert.throws(() => normalizeAdviceInput({ mode: 'checklist', language: 'fr', trip: { type: 'Museum visit' } }), /Check your input/);
+  assert.throws(() => normalizeAdviceInput({ mode: 'checklist', trip: { type: 'Museum visit', people: 0 } }), /Check your input/);
 });

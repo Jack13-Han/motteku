@@ -49,6 +49,6 @@ jobs:
         run: |
           node --experimental-strip-types --test tests/trips.test.mjs tests/packing.test.mjs tests/quantity.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node --test tests/i18n.test.cjs tests/checklist-api.test.cjs tests/trip-creation.test.cjs
+          node --test tests/i18n.test.cjs tests/checklist-api.test.cjs tests/trip-creation.test.cjs tests/weather.test.cjs tests/advice.test.cjs tests/weather-advice-ui.test.cjs tests/advice-packing.test.cjs tests/chat-interactions.test.cjs
       - name: Test Firestore rules and trip workflow in the local emulator
         run: npx --yes firebase-tools@15.35.0 emulators:exec --only firestore --project demo-motteku --config firebase.packing-test.json "node tests/run-emulator.cjs"
