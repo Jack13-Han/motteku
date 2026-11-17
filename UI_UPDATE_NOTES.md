@@ -1,15 +1,19 @@
-# Motteku UI update
+# Motteku bag photo update
 
 ## What changed
 
-- `app/page.tsx`: Rebuilt the Overview tab as a responsive travel dashboard inspired by the supplied purple Japan travel mockup. The trip name, destination, dates, packing counts, budget, and member list use the existing trip/workspace state. Dashboard quick actions navigate to the existing Packing list, Budget, Weather & AI, Group chat, and Members sections.
-- `app/globals.css`: Added the refreshed lavender/pastel dashboard theme, hero banner, progress ring, summary tiles, itinerary preview, quick-action cards, and responsive layouts. Existing styles for the other pages and components remain in place.
+- Bag photos store a Firebase Storage object path in the shared bag plan. Older Firebase download URLs are normalized when read.
+- Cloud photos download through the Firebase SDK and display using temporary browser object URLs. Local demo photos continue to use data URLs.
+- Loading and download failures have separate translated labels. Temporary URLs are released when photos change or the component unmounts.
+- Bag verification and location edits keep the current photo instead of triggering another download.
 
 ## Notes
 
-- The three itinerary rows on the Overview page are visual sample previews, not saved itinerary records. The current project does not yet have a persisted itinerary activity model.
-- Existing Firebase/local demo storage, packing, budget, weather, chat, reminders, members, and history components were not replaced.
-- `.env.local`, `.git`, and `node_modules` are intentionally excluded from this ZIP. Keep your own `.env.local` file safe and copy it into the extracted project if you use Firebase or optional API keys.
+- This merge updates the bag photo component. The dashboard page and global styles have no changes relative to the merge base.
+- Existing packing, budget, weather, chat, reminders, members and history flows retain their current data.
+- Cloud downloads require an existing Storage bucket, member access allowed by Storage Rules, and bucket CORS allowing the website's origin. Follow the [Firebase CORS setup documentation](https://firebase.google.com/docs/storage/web/download-files#cors_configuration). Configure the origins used by your app, including localhost when developing.
+- Local component tests mock Storage transport. They do not verify the deployed bucket, CORS or real-account image access.
+- Keep your own `.env.local` values; no project credentials are included in this change.
 
 ## Run on Windows
 
