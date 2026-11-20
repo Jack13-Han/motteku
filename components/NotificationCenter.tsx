@@ -16,6 +16,23 @@ export default function NotificationCenter({trips,accountId,onOpen}:{trips:Trip[
  const storageKey=`motteku-notifications-read-${accountId}`;
  useEffect(()=>{try{const saved=JSON.parse(localStorage.getItem(storageKey)||'[]');setRead(Array.isArray(saved)?saved.filter((id:unknown)=>typeof id==='string'):[]);}catch{setRead([]);}},[storageKey]);
  useEffect(()=>{const timer=window.setInterval(()=>setNow(new Date()),60000);return()=>clearInterval(timer);},[]);
+ useEffect(()=>{
+  if(!('Notification'in window)||Notification.permission!=='granted')return;
+  const today=dateKey(now);
+  for(const trip of trips){
+   const before=new Date(`${trip.startDate}T12:00:00`);before.setDate(before.getDate()-1);
+   const reminders=[
+    {id:'prep',date:trip.prepStartDate||trip.startDate,title:t('Preparation starts'),detail:t('Review the plan and buy the remaining items.')},
+    {id:'before',date:dateKey(before),title:t('Day before departure'),detail:t('Pack and verify the bags before departure.')},
+    {id:'departure',date:trip.startDate,title:t('Trip departure'),detail:t('Final check before leaving for this trip.')},
+   ];
+   for(const reminder of reminders){
+    if(reminder.date!==today)continue;
+    const key=`motteku-notified-${trip.id}-${reminder.date}-${reminder.id}`;
+    try{if(localStorage.getItem(key))continue;new Notification(`${reminder.title}: ${trip.name}`,{body:reminder.detail,tag:key});localStorage.setItem(key,'1')}catch{}
+   }
+  }
+ },[now,trips,t]);
  useEffect(()=>{if(!open)return;const close=(event:PointerEvent)=>{if(!root.current?.contains(event.target as Node))setOpen(false);};const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'){setOpen(false);trigger.current?.focus();}};document.addEventListener('pointerdown',close);document.addEventListener('keydown',escape);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',escape);};},[open]);
  const today=dateKey(now);
  const end=new Date(now);end.setDate(end.getDate()+7);
