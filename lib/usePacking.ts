@@ -12,15 +12,21 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [dataScope, setDataScope] = useState('');
+  const [syncState, setSyncState] = useState({ scope: '', uid: '', synced: false });
   const saving = useRef(false);
   const [roomMembers, setRoomMembers] = useState<{ uid: string; name: string }[]>([]);
   const cloud = firebaseConfigured;
   const localKey = `motteku-packing-v2:${scope}`;
+  const sourceKey = JSON.stringify([scope, uid, cloud]);
+  const source = useRef({ key: sourceKey });
+  if (source.current.key !== sourceKey) source.current = { key: sourceKey };
 
   useEffect(() => {
     let cancelled = false;
+    const identity = source.current;
+    const active = () => !cancelled && source.current === identity;
     const unsubscribers: (() => void)[] = [];
-    setData(null); setLoaded(false); setDataScope(''); setError(''); setRoomMembers([]);
+    setData(null); setLoaded(false); setDataScope(''); setSyncState({ scope: '', uid: '', synced: false }); setError(''); setRoomMembers([]);
     if (!scope || !uid) return;
     const initial: PackingData = { ownerUid: uid, adminUids: [], bags, members: members.map(m => ({ ...m, uid: m.name === 'Me' ? uid : '' })), items: [], assignments: [] };
     if (!cloud) {
@@ -29,50 +35,60 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
         setData(saved ? restorePackingData(JSON.parse(saved)) : initial);
         setLoaded(true);
         setDataScope(scope);
+        setSyncState({ scope, uid, synced: true });
       } catch { setError("Could not read local data."); }
       return;
     }
     if (!db || !uid) { setError("Waiting for Firebase sign-in."); return; }
     const database = db;
     const parent = doc(database, 'packingTrips', scope);
-    const fail = () => { if (!cancelled) { setLoaded(false); setError("Could not load packing items. Check membership and Firestore rules."); } };
+    let failed = false;
+    const fail = () => { if (active()) { failed = true; setLoaded(false); setSyncState({ scope, uid, synced: false }); setError("Could not load packing items. Check membership and Firestore rules."); } };
     void (async () => {
       try {
         const snapshot = await getDoc(parent);
-        if (cancelled) return;
+        if (!active()) return;
         if (!snapshot.exists()) {
           if (roomId) {
             const room = await getDoc(doc(database, 'sharedTrips', roomId));
+            if (!active()) return;
             if (room.data()?.ownerUid !== uid) throw new Error("The owner must initialize the packing list.");
           }
           await runTransaction(database, async transaction => {
-            if ((await transaction.get(parent)).exists()) return;
+            const existing = await transaction.get(parent);
+            if (!active() || existing.exists()) return;
             transaction.set(parent, { sourceTripId, roomId, ownerUid: uid, adminUids: [], bags, bagIds: bags.map(b => b.id), createdAt: serverTimestamp() });
             initial.members.forEach(m => transaction.set(doc(parent, 'members', m.id), m));
           });
         }
-        if (cancelled) return;
+        if (!active()) return;
         let parentReady = false, membersReady = false, itemsReady = false, assignmentsReady = false;
+        const confirmed = { parent: false, members: false, items: false, assignments: false };
+        const serverConfirmed = (snapshot: { metadata: { hasPendingWrites: boolean; fromCache: boolean } }) =>
+          snapshot.metadata.hasPendingWrites === false && snapshot.metadata.fromCache === false;
         const values: PackingData = { ...initial, members: [], items: [], assignments: [] };
         const publish = () => {
-          if (cancelled) return;
+          if (!active()) return;
           setData({ ...values });
           setDataScope(scope);
           setLoaded(parentReady && membersReady && itemsReady && assignmentsReady);
+          setSyncState({ scope, uid, synced: !failed && parentReady && membersReady && itemsReady && assignmentsReady && Object.values(confirmed).every(Boolean) });
         };
-        unsubscribers.push(onSnapshot(parent, s => {
+        unsubscribers.push(onSnapshot(parent, { includeMetadataChanges: true }, s => {
+          if (!active()) return;
           const value = s.data();
           if (!value) { fail(); return; }
           values.ownerUid = value.ownerUid; values.adminUids = value.adminUids || []; values.bags = value.bags || [];
-          parentReady = true; publish();
+          parentReady = true; confirmed.parent = serverConfirmed(s); publish();
         }, fail));
-        unsubscribers.push(onSnapshot(collection(parent, 'members'), s => { values.members = s.docs.map(d => d.data() as PackingMember); membersReady = true; publish(); }, fail));
-        unsubscribers.push(onSnapshot(collection(parent, 'items'), s => { values.items = s.docs.map(d => d.data() as TripItem); itemsReady = true; publish(); }, fail));
-        unsubscribers.push(onSnapshot(collection(parent, 'itemAssignments'), s => { values.assignments = s.docs.map(d => d.data() as ItemAssignment); assignmentsReady = true; publish(); }, fail));
+        unsubscribers.push(onSnapshot(collection(parent, 'members'), { includeMetadataChanges: true }, s => { if (!active()) return; values.members = s.docs.map(d => d.data() as PackingMember); membersReady = true; confirmed.members = serverConfirmed(s); publish(); }, fail));
+        unsubscribers.push(onSnapshot(collection(parent, 'items'), { includeMetadataChanges: true }, s => { if (!active()) return; values.items = s.docs.map(d => d.data() as TripItem); itemsReady = true; confirmed.items = serverConfirmed(s); publish(); }, fail));
+        unsubscribers.push(onSnapshot(collection(parent, 'itemAssignments'), { includeMetadataChanges: true }, s => { if (!active()) return; values.assignments = s.docs.map(d => d.data() as ItemAssignment); assignmentsReady = true; confirmed.assignments = serverConfirmed(s); publish(); }, fail));
         if (roomId) unsubscribers.push(onSnapshot(collection(database, 'sharedTrips', roomId, 'members'), s => {
+          if (!active()) return;
           setRoomMembers(s.docs.map(d => ({ uid: d.id, name: String(d.data().name || d.id) })));
         }, fail));
-      } catch (e) { if (!cancelled) setError(errorKey(e, 'Could not initialize packing items.')); }
+      } catch (e) { if (active()) { setSyncState({ scope, uid, synced: false }); setError(errorKey(e, 'Could not initialize packing items.')); } }
     })();
     return () => { cancelled = true; unsubscribers.forEach(unsubscribe => unsubscribe()); };
     // Roster and bags are refreshed explicitly, never overwrite another member's edits on render.
@@ -154,5 +170,5 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
     finally { saving.current = false; setBusy(false); }
   }
 
-  return { data, error, setError, busy, loaded: loaded && dataScope === scope, roomMembers, cloud, mutate, commitPlan };
+  return { data, error, setError, busy, loaded: loaded && dataScope === scope, synced: loaded && dataScope === scope && syncState.scope === scope && syncState.uid === uid && syncState.synced, roomMembers, cloud, mutate, commitPlan };
 }
