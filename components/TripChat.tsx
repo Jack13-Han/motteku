@@ -1,14 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { collection, doc, getDoc, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc } from 'firebase/firestore';
-import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { auth, db, storage } from '@/lib/firebase';
-import { Check, Copy, ImagePlus, LoaderCircle, MessageCircle, Send, Users, X } from 'lucide-react';
+import { collection, deleteField, doc, FieldPath, getDoc, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase';
+import { buildReply, reactionSummary, type ChatMessage as Message, type ChatReaction, type ChatReply } from '@/lib/chat';
+import { chatSendError, type ChatSendStage } from '@/lib/chatSendError';
+import { Check, Copy, LoaderCircle, MessageCircle, Reply, Send, Users, X } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n';
 
 type ChatInvitation = { roomId: string; code: string };
-type Message = { id: string; senderUid: string; senderName: string; text: string; imagePath?: string; imageName?: string; createdAt?: { toDate: () => Date } | null };
 type Member = { uid: string; name: string };
 type Props = {
   tripId: string; chatId?: string; inviteCode?: string; userUid?: string; userName?: string; tripName: string;
@@ -47,57 +47,6 @@ function clearInvitation() {
   window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
-export function validateChatPhoto(file: Pick<File, 'type' | 'size'>): string | null {
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return 'Only JPEG, PNG and WebP photos are supported.';
-  if (file.size > 10 * 1024 * 1024) return 'Choose a photo smaller than 10 MB.';
-  return null;
-}
-
-async function preparePhoto(file: File): Promise<Blob> {
-  const validation = validateChatPhoto(file);
-  if (validation) throw new Error(validation);
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    const url = URL.createObjectURL(file);
-    image.onload = () => {
-      try {
-        const ratio = Math.min(1, 1600 / Math.max(image.naturalWidth, image.naturalHeight));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio));
-        canvas.height = Math.max(1, Math.round(image.naturalHeight * ratio));
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('Photo could not be prepared. Try another image.');
-        context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height);
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob(blob => {
-          if (!blob) { reject(new Error('Photo could not be prepared. Try another image.')); return; }
-          if (blob.size > 2 * 1024 * 1024) { reject(new Error('The resized photo is still too large. Choose a smaller photo.')); return; }
-          resolve(blob);
-        }, 'image/jpeg', 0.8);
-      } catch (error) { reject(error); }
-      finally { URL.revokeObjectURL(url); }
-    };
-    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Photo could not be prepared. Try another image.')); };
-    image.src = url;
-  });
-}
-
-function ChatPhoto({ room, message, onLoad }: { room: string; message: Message; onLoad: () => void }) {
-  const { t } = useLanguage();
-  const [url, setUrl] = useState('');
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let active = true;
-    setUrl(''); setFailed(false);
-    const expected = `sharedTrips/${room}/chat/${message.senderUid}/${message.id}.jpg`;
-    if (!storage || message.imagePath !== expected) { setFailed(true); return; }
-    getDownloadURL(ref(storage, expected)).then(value => { if (active) setUrl(value); }).catch(() => { if (active) setFailed(true); });
-    return () => { active = false; };
-  }, [room, message.id, message.senderUid, message.imagePath]);
-  if (!url || failed) return <div className="chat-photo-placeholder">{failed ? t('Photo could not load.') : <><LoaderCircle className="spin" size={17}/>{t('Loading photo…')}</>}</div>;
-  return <a className="chat-photo-link" href={url} target="_blank" rel="noopener noreferrer" aria-label={t('Open photo')}><img className="chat-photo" src={url} alt={message.imageName || t('Chat photo')} loading="lazy" onLoad={onLoad} onError={() => setFailed(true)}/></a>;
-}
-
 export default function TripChat({ tripId, chatId, inviteCode, userUid, userName, tripName, onRoomChange, onJoinedRoom, onNotice }: Props) {
   const { language, t } = useLanguage();
   const [room, setRoom] = useState(chatId || '');
@@ -107,8 +56,9 @@ export default function TripChat({ tripId, chatId, inviteCode, userUid, userName
   const [members, setMembers] = useState<Member[]>([]);
   const [name, setName] = useState(userName || '');
   const [text, setText] = useState('');
-  const [photo, setPhoto] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState('');
+  const [replyTo, setReplyTo] = useState<ChatReply | null>(null);
+  const [pendingReactions, setPendingReactions] = useState<Set<string>>(new Set());
+  const [highlightedMessage, setHighlightedMessage] = useState('');
   const [invitation, setInvitation] = useState<ChatInvitation | null>(null);
   const [joinLink, setJoinLink] = useState('');
   const [inviteLink, setInviteLink] = useState('');
@@ -118,11 +68,17 @@ export default function TripChat({ tripId, chatId, inviteCode, userUid, userName
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
+  const [sendError, setSendError] = useState('');
+  const [sendFailureCode, setSendFailureCode] = useState('');
   const [loadError, setLoadError] = useState('');
   const [copied, setCopied] = useState(false);
   const [newMessages, setNewMessages] = useState(false);
   const messageList = useRef<HTMLDivElement>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
+  const knownMessageIds = useRef<Set<string>>(new Set());
+  const reactionScope = useRef(0);
+  const reactionLocks = useRef<Set<string>>(new Set());
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nearBottom = useRef(true);
   const forceScroll = useRef(false);
   const actionSerial = useRef(0);
@@ -133,8 +89,11 @@ export default function TripChat({ tripId, chatId, inviteCode, userUid, userName
   current.current = { uid: userUid, tripId, room };
 
   useEffect(() => {
+    reactionScope.current += 1; reactionLocks.current.clear(); setPendingReactions(new Set());
+    setReplyTo(null); setHighlightedMessage('');
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
     setRoom(chatId || ''); setCode(inviteCode || ''); setRoomName(tripName);
-    setText(''); setPhoto(null); setError(''); setLoadError('');
+    setText(''); setError(''); setLoadError(''); setSendError(''); setSendFailureCode('');
     setBusy(false); setSending(false); busyRef.current = false; sendingRef.current = false;
     actionSerial.current += 1; sendSerial.current += 1; nearBottom.current = true; setNewMessages(false);
   }, [tripId, chatId, inviteCode, userUid, tripName]);
@@ -153,21 +112,17 @@ export default function TripChat({ tripId, chatId, inviteCode, userUid, userName
     setLocalLink(['localhost', '127.0.0.1', '[::1]', '::1'].includes(window.location.hostname) || window.location.hostname.endsWith('.localhost'));
   }, [room, code]);
   useEffect(() => {
-    if (!photo) { setPhotoPreview(''); return; }
-    const url = URL.createObjectURL(photo); setPhotoPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [photo]);
-
-  useEffect(() => {
-    setMessages([]); setConnected(false); setLoadError(''); nearBottom.current = true;
+    setMessages([]); setConnected(false); setLoadError(''); nearBottom.current = true; knownMessageIds.current = new Set();
     if (!room || !userUid || !db || invitation) { setLoading(false); return; }
     let active = true;
     setLoading(true);
     const recent = query(collection(db, 'sharedTrips', room, 'messages'), orderBy('createdAt', 'desc'), limit(100));
-    const stop = onSnapshot(recent, snapshot => {
+    const stop = onSnapshot(recent, { includeMetadataChanges: true }, snapshot => {
       if (!active) return;
-      if (!nearBottom.current && !forceScroll.current) setNewMessages(true);
-      setMessages(snapshot.docs.map(item => ({ ...item.data({ serverTimestamps: 'estimate' }), id: item.id } as Message)).reverse());
+      const next = snapshot.docs.map(item => ({ ...item.data({ serverTimestamps: 'estimate' }), id: item.id, pending: item.metadata?.hasPendingWrites ?? false } as Message)).reverse();
+      if (!nearBottom.current && !forceScroll.current && next.some(item => !knownMessageIds.current.has(item.id))) setNewMessages(true);
+      knownMessageIds.current = new Set(next.map(item => item.id));
+      setMessages(next);
       setLoading(false); setConnected(true);
     }, () => {
       if (!active) return;
@@ -200,7 +155,10 @@ export default function TripChat({ tripId, chatId, inviteCode, userUid, userName
     return () => cancelAnimationFrame(frame);
   }, [messages]);
 
-  useEffect(() => () => { actionSerial.current += 1; sendSerial.current += 1; }, []);
+  useEffect(() => () => {
+    actionSerial.current += 1; sendSerial.current += 1; reactionScope.current += 1;
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+  }, []);
 
   function validName() {
     if (!name.trim()) { setError('Your name is required.'); return false; }
@@ -266,58 +224,69 @@ export default function TripChat({ tripId, chatId, inviteCode, userUid, userName
     catch { setError('Copy is unavailable. Select and copy the invite link below.'); }
   }
 
-  function choosePhoto(file?: File) {
-    if (!file) return;
-    const validation = validateChatPhoto(file);
-    if (validation) { setError(validation); return; }
-    setError(''); setPhoto(file);
+  function selectReply(message: Message) {
+    if (sendingRef.current || busyRef.current || !connected || message.pending) return;
+    const selected = buildReply(message);
+    if (!selected) { setError('The original message is not available. Choose another message to reply to.'); return; }
+    setReplyTo(selected); setError(''); setSendError(''); setSendFailureCode(''); composerInput.current?.focus();
+  }
+
+  function showOriginal(messageId: string) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(messageId) || !messages.some(message => message.id === messageId)) { setError('Original message is outside the latest 100 messages.'); return; }
+    const element = messageList.current?.querySelector<HTMLElement>(`[data-message-id="${messageId}"]`);
+    element?.scrollIntoView({ behavior: 'smooth', block: 'center' }); element?.focus({ preventScroll: true });
+    setHighlightedMessage(messageId);
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => setHighlightedMessage(''), 2000);
+  }
+
+  async function react(message: Message, reaction: ChatReaction) {
+    if (!db || !userUid || auth?.currentUser?.uid !== userUid || !room || !connected || invitation || message.pending || sendingRef.current || busyRef.current || reactionLocks.current.has(message.id)) return;
+    const uid = userUid, targetRoom = room, scope = reactionScope.current;
+    const stillCurrent = () => scope === reactionScope.current && current.current.uid === uid && current.current.room === targetRoom;
+    reactionLocks.current.add(message.id); setPendingReactions(new Set(reactionLocks.current)); setError('');
+    try {
+      const selected = reactionSummary(message.reactions, uid).find(item => item.id === reaction)?.selected;
+      await updateDoc(doc(db, 'sharedTrips', targetRoom, 'messages', message.id), new FieldPath('reactions', uid), selected ? deleteField() : reaction);
+    } catch { if (stillCurrent()) setError('Could not update reaction. Check group membership and Firestore rules.'); }
+    finally { if (stillCurrent()) { reactionLocks.current.delete(message.id); setPendingReactions(new Set(reactionLocks.current)); } }
   }
 
   async function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (sendingRef.current || busyRef.current || !room || !connected || invitation || (!text.trim() && !photo) || !validName()) return;
-    if (!db || !userUid || auth?.currentUser?.uid !== userUid) { setError('Sign in to Firebase to use group chat.'); return; }
-    if (text.trim().length > 2000) { setError('Messages can contain up to 2000 characters.'); return; }
-    if (photo && !storage) { setError('Photos require Firebase Storage to be configured.'); return; }
+    if (sendingRef.current || busyRef.current || !room || !connected || invitation || !text.trim()) return;
+    setSendError(''); setSendFailureCode('');
+    if (!name.trim()) { setSendError('Your name is required.'); return; }
+    if (Array.from(name.trim()).length > 80) { setSendError('Use 80 characters or fewer.'); return; }
+    if (!db || !userUid || auth?.currentUser?.uid !== userUid) { setSendError('Sign in to Firebase to use group chat.'); return; }
+    if (text.trim().length > 2000) { setSendError('Messages can contain up to 2000 characters.'); return; }
     const uid = userUid, targetRoom = room, serial = ++sendSerial.current;
-    const draftText = text.trim(), draftPhoto = photo, displayName = name.trim();
+    const draftText = text.trim(), draftReply = replyTo, displayName = name.trim();
     const stillCurrent = () => serial === sendSerial.current && current.current.uid === uid && current.current.room === targetRoom;
     sendingRef.current = true; setSending(true); setError('');
-    let uploadedPath = '';
-    let preparing = Boolean(draftPhoto);
+    let stage: ChatSendStage = draftReply ? 'reply-read' : 'message-write';
     try {
       const message = doc(collection(db, 'sharedTrips', targetRoom, 'messages'));
       const payload: Record<string, unknown> = { senderUid: uid, senderName: displayName, text: draftText, createdAt: serverTimestamp() };
-      if (draftPhoto && storage) {
-        const blob = await preparePhoto(draftPhoto);
-        preparing = false;
+      if (draftReply) {
+        const original = await getDoc(doc(db, 'sharedTrips', targetRoom, 'messages', draftReply.messageId));
         if (!stillCurrent() || auth?.currentUser?.uid !== uid) return;
-        const path = `sharedTrips/${targetRoom}/chat/${uid}/${message.id}.jpg`;
-        await uploadBytes(ref(storage, path), blob, { contentType: 'image/jpeg' });
-        uploadedPath = path;
-        payload.imagePath = path; payload.imageName = draftPhoto.name.slice(0, 120);
+        const quote = original.exists() ? buildReply({ ...original.data(), id: draftReply.messageId } as Message) : null;
+        if (!quote) { setSendError('The original message is not available. Choose another message to reply to.'); return; }
+        payload.replyTo = quote;
       }
-      if (!stillCurrent() || auth?.currentUser?.uid !== uid) {
-        // The upload exists, but no Firestore write has been attempted yet.
-        if (uploadedPath && storage && auth?.currentUser?.uid === uid) {
-          try { await deleteObject(ref(storage, uploadedPath)); } catch {}
-        }
-        return;
-      }
+      if (!stillCurrent() || auth?.currentUser?.uid !== uid) return;
       forceScroll.current = true;
+      stage = 'message-write';
       await setDoc(message, payload);
-      if (stillCurrent()) { setText(''); setPhoto(null); if (fileInput.current) fileInput.current.value = ''; }
+      if (stillCurrent()) { setText(''); setReplyTo(null); setSendError(''); setSendFailureCode(''); }
     } catch (failure) {
-      const firebaseCode = (failure as { code?: string }).code;
-      // Only remove a pending upload when Firestore has definitely rejected the write.
-      if (uploadedPath && storage && ['permission-denied', 'invalid-argument'].includes(firebaseCode || '')) {
-        try { await deleteObject(ref(storage, uploadedPath)); } catch {}
-      }
       if (stillCurrent()) {
-        const message = failure instanceof Error ? failure.message : '';
-        setError(preparing && message ? message : draftPhoto ? 'Photo was not sent. Check Firebase Storage rules.' : 'Message was not sent. Check Firebase permissions.');
+        const feedback = chatSendError(failure, stage, Boolean(draftReply));
+        setSendError(feedback.message); setSendFailureCode(feedback.code);
       }
-    } finally { if (stillCurrent()) { sendingRef.current = false; setSending(false); } }
+    }
+    finally { if (stillCurrent()) { sendingRef.current = false; setSending(false); } }
   }
 
   function composerKey(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -343,16 +312,23 @@ export default function TripChat({ tripId, chatId, inviteCode, userUid, userName
         <div className="chat-members" aria-label={t('Group members')}><div className="chat-member-list">{members.map(member => <span key={member.uid} className="chat-member-chip">{member.name}</span>)}</div></div>
         {loadError && <p className="chat-feedback error" role="alert">{t(loadError)}</p>}
         <div ref={messageList} className="chat-messages" role="log" aria-label={t('Group chat')} aria-live="polite" aria-relevant="additions" onScroll={() => { const list = messageList.current; if (list) { nearBottom.current = list.scrollHeight - list.scrollTop - list.clientHeight < 90; if (nearBottom.current) setNewMessages(false); } }}>
-          {loading ? <div className="empty-inline"><LoaderCircle className="spin" size={18}/> {t('Connecting to chat…')}</div> : messages.length ? messages.map(message => <div className={`chat-message${message.senderUid === userUid ? ' mine' : ''}`} key={message.id}><b>{message.senderName}</b>{message.imagePath && <ChatPhoto room={room} message={message} onLoad={() => { const list = messageList.current; if (list && nearBottom.current) list.scrollTop = list.scrollHeight; }}/>} {message.text && <span className="chat-message-copy">{message.text}</span>}<small className="chat-message-time">{message.createdAt?.toDate ? message.createdAt.toDate().toLocaleString(language === 'ja' ? 'ja-JP' : 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : t('Sending…')}</small></div>) : <div className="empty-inline">{t('No messages yet. Say hello to your group!')}</div>}
+          {loading ? <div className="empty-inline"><LoaderCircle className="spin" size={18}/> {t('Connecting to chat…')}</div> : messages.length ? messages.map(message => <div className={`chat-message${message.senderUid === userUid ? ' mine' : ''}${highlightedMessage === message.id ? ' chat-original-highlight' : ''}`} key={message.id} data-message-id={message.id} tabIndex={-1}>
+            <b>{message.senderName}</b>
+            {message.replyTo && <button type="button" className="chat-reply-quote" onClick={() => showOriginal(message.replyTo!.messageId)} aria-label={t('View original message')}><b>{message.replyTo.senderName}</b><span>{message.replyTo.text || t('Photo attachment removed.')}</span></button>}
+            {message.imagePath && <span className="chat-legacy-photo">{t('Photo attachment removed.')}</span>}
+            {message.text && <span className="chat-message-copy">{message.text}</span>}
+            <small className="chat-message-time">{message.createdAt?.toDate ? message.createdAt.toDate().toLocaleString(language === 'ja' ? 'ja-JP' : 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : t('Sending…')}</small>
+            <div className="chat-message-actions"><button type="button" className="soft-button" aria-label={t('Reply to {name}', { name: message.senderName })} disabled={sending || busy || !connected || !userUid || message.pending} onClick={() => selectReply(message)}><Reply size={14}/>{t('Reply')}</button></div>
+            <div className="chat-reactions" role="group" aria-label={t('Reactions')}>{reactionSummary(message.reactions, userUid).map(reaction => <button type="button" key={reaction.id} className={`chat-reaction${reaction.selected ? ' selected' : ''}`} aria-label={t(reaction.label)} title={t(reaction.label)} aria-pressed={reaction.selected} disabled={sending || busy || !connected || !userUid || message.pending || pendingReactions.has(message.id)} onClick={() => void react(message, reaction.id)}><span aria-hidden="true">{reaction.emoji}</span><small>{reaction.count}</small></button>)}</div>
+          </div>) : <div className="empty-inline">{t('No messages yet. Say hello to your group!')}</div>}
         </div>
         {newMessages && <button type="button" className="soft-button chat-unread-button" onClick={() => { const list = messageList.current; if (list) list.scrollTop = list.scrollHeight; nearBottom.current = true; setNewMessages(false); }}>{t('New messages')}</button>}
         <p className="chat-hint">{t('Showing the latest 100 messages.')}</p>
         <form className="chat-compose" onSubmit={send} aria-busy={sending}>
-          {photo && <div className="chat-draft-photo">{photoPreview && <img src={photoPreview} alt={t('Photo ready to send')}/>}<div><b>{t('Photo ready to send')}</b><small>{photo.name}</small></div><button type="button" className="icon-button" disabled={sending} aria-label={t('Remove photo')} onClick={() => { setPhoto(null); if (fileInput.current) fileInput.current.value = ''; }}><X size={16}/></button></div>}
-          <textarea aria-label={t('Write a message…')} value={text} maxLength={2000} rows={2} disabled={sending} placeholder={t('Write a message…')} onChange={event => setText(event.target.value)} onKeyDown={composerKey}/>
-          <input ref={fileInput} type="file" className="file-input" accept="image/jpeg,image/png,image/webp" aria-label={t('Select a photo')} onChange={event => choosePhoto(event.target.files?.[0])}/>
-          <div className="chat-compose-tools"><button type="button" className="soft-button" disabled={sending || !storage || !connected} onClick={() => fileInput.current?.click()}><ImagePlus size={17}/>{t('Add photo')}</button><button type="submit" className="primary" disabled={sending || !connected || !userUid || !name.trim() || (!text.trim() && !photo)}>{sending ? <LoaderCircle className="spin" size={17}/> : <Send size={17}/>} {t(sending ? 'Sending…' : 'Send message')}</button></div>
-          <p className="chat-hint">{t(storage ? 'JPEG, PNG or WebP, up to 10 MB. Photos are resized before sending.' : 'Photos require Firebase Storage to be configured.')}</p>
+          {replyTo && <div className="chat-reply-preview"><div><b>{t('Replying to {name}', { name: replyTo.senderName })}</b><span>{replyTo.text || t('Photo attachment removed.')}</span></div><button type="button" className="icon-button" disabled={sending} aria-label={t('Cancel reply')} onClick={() => { setReplyTo(null); setSendError(''); setSendFailureCode(''); }}><X size={16}/></button></div>}
+          <textarea ref={composerInput} aria-label={t('Write a message…')} value={text} maxLength={2000} rows={2} disabled={sending} placeholder={t('Write a message…')} onChange={event => setText(event.target.value)} onKeyDown={composerKey}/>
+          {sendError && <p className="chat-feedback error" role="alert" data-chat-send-error="true">{t(sendError)}{sendFailureCode && <> <code>({sendFailureCode})</code></>}</p>}
+          <div className="chat-compose-tools"><button type="submit" className="primary" disabled={sending || busy || !connected || !userUid || !name.trim() || !text.trim()}>{sending ? <LoaderCircle className="spin" size={17}/> : <Send size={17}/>} {t(sending ? 'Sending…' : 'Send message')}</button></div>
         </form>
       </>}
       <details className="chat-invite-panel"><summary>{t('Join with an invite link')}</summary><form className="chat-join-form" onSubmit={joinFromLink}><label className="field-label">{t('Paste invite link')}<input type="text" value={joinLink} onChange={event => setJoinLink(event.target.value)} placeholder="https://…/?joinChat=…&inviteCode=…" autoComplete="off"/></label><button type="submit" className="soft-button" disabled={busy || !userUid || !joinLink.trim()}>{t('Join group')}</button></form></details>

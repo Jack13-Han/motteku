@@ -6,27 +6,47 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/sharedTrips/$(tripId)/members/$(request.auth.uid));
     }
 
+    function validChatReply(tripId) {
+      let reply = request.resource.data.replyTo;
+      let target = /databases/$(database)/documents/sharedTrips/$(tripId)/messages/$(reply.messageId);
+      return reply is map
+        && reply.keys().hasAll(['messageId', 'senderUid', 'senderName', 'text'])
+        && reply.keys().hasOnly(['messageId', 'senderUid', 'senderName', 'text'])
+        && reply.messageId is string
+        && reply.messageId.matches('^[A-Za-z0-9_-]{1,128}$')
+        && reply.senderUid is string && reply.senderUid.size() > 0 && reply.senderUid.size() <= 128
+        && reply.senderName is string && reply.senderName.size() > 0 && reply.senderName.size() <= 80
+        && reply.text is string && reply.text.size() <= 2000
+        && exists(target)
+        && reply.senderUid == get(target).data.senderUid
+        && reply.senderName == get(target).data.senderName
+        && reply.text == get(target).data.get('text', '');
+    }
+
     function validChatMessage(tripId, messageId) {
       let message = request.resource.data;
-      let imagePath = message.get('imagePath', '');
-      let imageName = message.get('imageName', '');
-      let ownImagePath = 'sharedTrips/' + tripId + '/chat/' + request.auth.uid + '/' + messageId + '.jpg';
       return message.keys().hasAll(['senderUid', 'senderName', 'text', 'createdAt'])
-        && message.keys().hasOnly(['senderUid', 'senderName', 'text', 'createdAt', 'imagePath', 'imageName'])
+        && message.keys().hasOnly(['senderUid', 'senderName', 'text', 'createdAt', 'replyTo'])
         && message.senderUid == request.auth.uid
         && message.senderName is string
         && message.senderName.size() > 0
         && message.senderName.size() <= 80
         && message.text is string
+        && message.text.size() > 0
         && message.text.size() <= 2000
         && message.createdAt is timestamp
         && message.createdAt == request.time
-        && imagePath is string
-        && (imagePath == '' || imagePath == ownImagePath)
-        && imageName is string
-        && imageName.size() <= 120
-        && (imagePath != '' || imageName == '')
-        && (message.text.size() > 0 || imagePath != '');
+        && (!('replyTo' in message) || validChatReply(tripId));
+    }
+
+    function validChatReactionUpdate() {
+      let before = resource.data.get('reactions', {});
+      let after = request.resource.data.get('reactions', {});
+      return before is map && after is map
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+        && after.diff(before).affectedKeys().hasOnly([request.auth.uid])
+        && (!after.keys().hasAny([request.auth.uid])
+          || after[request.auth.uid] in ['like', 'angry', 'ok', 'haha', 'sad']);
     }
 
 
@@ -345,10 +365,12 @@ service cloud.firestore {
       }
 
       match /messages/{messageId} {
-        // Existing text messages remain readable; schema validation applies to new writes.
+        // Older messages stay readable; new messages contain text and an optional reply.
         allow read: if isTripMember(tripId);
         allow create: if isTripMember(tripId) && validChatMessage(tripId, messageId);
-        allow update, delete: if false;
+        // A member may change or remove only their own reaction, never message content.
+        allow update: if isTripMember(tripId) && validChatReactionUpdate();
+        allow delete: if false;
       }
     }
   }
