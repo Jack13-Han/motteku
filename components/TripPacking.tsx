@@ -9,6 +9,7 @@ import type { usePacking } from '@/lib/usePacking';
 import { packingTemplates } from '@/lib/packingTemplates';
 import PackingCards from './PackingCards';
 import MemberRemovalDialog from './MemberRemovalDialog';
+import DepartureReadiness from './DepartureReadiness';
 import { canEditAssignment, createPackingItem, reconcilePacking, STATUS_LABELS, type ItemAssignment, type ItemStatus, type PackingBag, type Registration, type TripItem } from '@/lib/packing';
 
 type Props = {
@@ -187,6 +188,7 @@ export default function TripPacking({ tripId, tripType, packing, managed = false
           allRows.forEach(a => batch.delete(doc(parent, 'itemAssignments', a.id)));
         });
       }}/>
+      <DepartureReadiness key={`${scope}:${uid}`} scope={scope} uid={uid} packing={packing} readOnly={readOnly}/>
       {admin && legacyItems.length > 0 && <details className="packing-settings"><summary>{t("Import legacy checklist")}</summary><p>{t("Copies up to 3 assigned legacy items as shared items without changing the original list. Register personal items above. Previously imported items are skipped.")}</p><button className="soft-button" disabled={disabled || legacyItems.every(i => data.items.some(item => item.id === `legacy-${i.id}`))} onClick={importLegacy}>{t("Copy next 3 items")}</button></details>}
     </>}
   </section>;

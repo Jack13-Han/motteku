@@ -14,6 +14,7 @@ import TripPacking from './TripPacking';
 import WeatherAdvice from './WeatherAdvice';
 import { addAdviceItem } from '@/lib/addAdviceItem';
 import { Button } from './ui/button';
+import GroupPolls from './GroupPolls';
 
 const statusLabels = { draft: 'Draft', recruiting: 'Recruiting', confirmed: 'Confirmed', completed: 'Completed' };
 const roleLabels = { owner: 'Owner', admin: 'Admin', member: 'Member' };
@@ -67,6 +68,7 @@ export default function TripWorkspace({ tripId }: { tripId: string }) {
           {trip.status === 'confirmed' && !trip.packingReady && !changed && manager && <><p>{t('Checklist generation is not finished. Resume without resetting existing checks.')}</p><Button disabled={locked || !packing.loaded} onClick={() => setReview(true)}>{t('Resume generation')}</Button></>}
         </section>
       </div>
+      <GroupPolls key={`${tripId}:${user?.uid || ''}`} kind="trip" scopeId={tripId} uid={user?.uid || ''} userName={members.find(member => member.uid === user?.uid)?.name || user?.displayName || ''} canManage={manager} disabled={locked || trip.status === 'completed'}/>
       <WeatherAdvice
         key={trip.id}
         trip={{id:trip.id,name:trip.name,type:templateTripTypes[trip.type],location:trip.destination,startDate:trip.startDate,endDate:trip.endDate,people:members.length}}

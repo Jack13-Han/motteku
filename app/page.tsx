@@ -3,7 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, signInAnonymously, signOut, type User } from 'firebase/auth';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { auth, db, firebaseConfigured } from '@/lib/firebase';
-import { CalendarDays, Check, CheckCheck, CloudSun, Copy, Download, History, ListChecks, LoaderCircle, MessageCircle, Plus, ShoppingCart, Sparkles, Users, Wallet, Weight, X, TentTree, Trash2, Save, Cloud, ClipboardCheck, LogOut, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { CalendarDays, Check, CheckCheck, CloudSun, Copy, Download, History, ListChecks, LoaderCircle, MessageCircle, Plus, ShoppingCart, Sparkles, Users, Wallet, Weight, X, TentTree, Trash2, Save, Cloud, ClipboardCheck, LogOut, PanelLeftClose, PanelLeftOpen, Search, Heart, Route, Home as HomeIcon } from 'lucide-react';
+import TravelDashboard from '@/components/TravelDashboard';
+import TripItinerary from '@/components/TripItinerary';
+import { normalizeActivities, type TripActivity } from '@/lib/itinerary';
 import TripChat, { parseChatInvitation } from '@/components/TripChat';
 import TripPacking from '@/components/TripPacking';
 import WeatherAdvice from '@/components/WeatherAdvice';
@@ -29,7 +32,7 @@ type Item = { quantity?:number; id:string; name:string; category:string; status:
 type Member = { id:string; name:string };
 type Expense = {id:string;name:string;amount:number;payer:string};
 type Bag = {id:string;name:string;photoUrl:string;verified:boolean};
-type Trip = { pendingPacking?:TemplateSelection[]; id:string; name:string; type:string; location:string; startDate:string; endDate:string; prepStartDate?:string; people:number; budget:number; members:Member[]; items:Item[]; expenses:Expense[]; bags:Bag[]; sharedChatId?:string; inviteCode?:string; createdAt:string };
+type Trip = { activities?:TripActivity[]; pendingPacking?:TemplateSelection[]; id:string; name:string; type:string; location:string; startDate:string; endDate:string; prepStartDate?:string; people:number; budget:number; members:Member[]; items:Item[]; expenses:Expense[]; bags:Bag[]; sharedChatId?:string; inviteCode?:string; createdAt:string };
 type Workspace = { trips:Trip[]; activeTripId:string; history:Trip[] };
 const templates:Record<string,string[]> = {
   Camping:['Tent','Sleeping bag','Sleeping mat','Flashlight','Portable charger','Water bottle','First aid kit','Rain jacket','Cooking set','Trash bags'],
@@ -40,13 +43,15 @@ const templates:Record<string,string[]> = {
 };
 const uid = () => Math.random().toString(36).slice(2,10);
 const newItem = (name:string, category='General'):Item => ({id:uid(),name,category,status:'Need to buy',assignee:'Unassigned',weight:0,price:0,paidBy:'',comment:'',dueDate:'',receiptUrl:''});
-const normalizeTrip=(t:any):Trip=>({...t,items:(t.items||[]).map((i:any)=>({...newItem(i.name||'Item'),...i,bagId:i.bagId||'',bagLocation:i.bagLocation||''})),members:t.members||[],expenses:t.expenses||[],bags:t.bags||[]});
+const normalizeTrip=(t:any):Trip=>({...t,activities:normalizeActivities(t.activities),items:(t.items||[]).map((i:any)=>({...newItem(i.name||'Item'),...i,bagId:i.bagId||'',bagLocation:i.bagLocation||''})),members:t.members||[],expenses:t.expenses||[],bags:t.bags||[]});
 const normalizeWorkspace=(data:any):Workspace=>({trips:(data.trips||[]).map(normalizeTrip),activeTripId:data.activeTripId||'',history:(data.history||[]).map(normalizeTrip)});
 const seed:Workspace = { trips:[{id:'demo-trip',name:'Osaka Camping Weekend',type:'Camping',location:'Osaka, Japan',startDate:new Date(Date.now()+7*86400000).toISOString().slice(0,10),endDate:new Date(Date.now()+9*86400000).toISOString().slice(0,10),prepStartDate:new Date(Date.now()+4*86400000).toISOString().slice(0,10),people:3,budget:15000,members:[{id:'m1',name:'Han'},{id:'m2',name:'Aki'},{id:'m3',name:'Yuki'}],items:templates.Camping.map((n,i)=>({...newItem(n,'Camping'),status:i<3?'Owned':'Need to buy',assignee:['Han','Aki','Yuki'][i%3],weight:[2.5,1.4,0.8,0.3,0.2,0.6,0.4,0.3,1.2,0.2][i],price:[0,0,0,1200,1800,500,900,1800,2500,300][i],paidBy:i===3?'Aki':''})),expenses:[],bags:[],createdAt:new Date().toISOString()}],activeTripId:'demo-trip',history:[]};
 export default function Home(){
  const {language,setLanguage,t:tr,date}=useLanguage();
  const router=useRouter();
  const [sidebarCollapsed,setSidebarCollapsed]=useState(false);
+ const [tripSearch,setTripSearch]=useState('');
+ const [searchOpen,setSearchOpen]=useState(false);
  const [loggingOut,setLoggingOut]=useState(false);
  const skipAnonymousSignIn=useRef(false);
 
@@ -263,9 +268,9 @@ export default function Home(){
    {draftError&&<p role="status">{tr(draftError)}</p>}
    {tripDraft&&<PackingPreview items={draftItems} setItems={setDraftItems} onConfirm={confirmTrip} onCancel={()=>{setTripDraft(null);setDraftItems([]);setDraftError('');}}/>}
  </section>;
- const nav=[['Overview',CalendarDays],['Packing list',ListChecks],['Bags & photos',ClipboardCheck],['Group chat',MessageCircle],['Reminders',CalendarDays],['Members',Users],['Budget',Wallet],['Weather & AI',CloudSun],['History',History]] as const;
+ const nav=[['Overview',HomeIcon],['Itinerary',Route],['Packing list',ListChecks],['Bags & photos',ClipboardCheck],['Group chat',MessageCircle],['Reminders',CalendarDays],['Members',Users],['Budget',Wallet],['Weather & AI',CloudSun],['History',History]] as const;
  if(!ready)return <main className="loading"><LoaderCircle className="spin" size={28}/> {tr('Loading Motteku…')}</main>;
-  return <main className="app-shell">
+  return <main className="app-shell dashboard-shell">
       <aside
         className={sidebarCollapsed ? "sidebar sidebar-collapsed" : "sidebar"}
       >
@@ -311,7 +316,7 @@ export default function Home(){
                 onClick={() => setTab(label)}
               >
                 <Icon size={18} />
-                <span>{tr(label)}</span>
+                <span>{tr(label==='Overview'?'Home':label)}</span>
                 {label === "Packing list" && active && (
                   <em>{active.items.length + (packing.loaded ? packing.data?.items.length || 0 : 0)}</em>
                 )}
@@ -319,7 +324,7 @@ export default function Home(){
             ))}
           </nav>
         </div>
-        <div className="sidebar-footer">
+        <div className="sidebar-footer"><div className="sidebar-travel-note"><Heart size={23} fill="currentColor"/><span>{tr("Let’s make great memories!")}</span></div>
           <div className="sidebar-bottom">
             <div className="sync-dot" />
             <span>
@@ -351,32 +356,12 @@ export default function Home(){
         </div>
       </aside>
       <section className="main-area">
-        <header className="topbar">
-          <div>
-            <div className="eyebrow">
-              {tr("YOUR NEXT ADVENTURE STARTS HERE")}
-            </div>
-            <h1>
-              {tr(
-                tab === "Overview"
-                  ? "Trip overview"
-                  : tab === "Packing list"
-                    ? "Packing checklist"
-                    : tab === "Bags & photos"
-                      ? "Bags & item locations"
-                      : tab === "Group chat"
-                        ? "Trip group chat"
-                        : tab === "Reminders"
-                          ? "Preparation reminders"
-                          : tab === "Members"
-                            ? "Your travel crew"
-                            : tab === "Budget"
-                              ? "Budget & expenses"
-                              : tab === "Weather & AI"
-                                ? "Weather & smart advice"
-                                : "Trip history",
-              )}
-            </h1>
+        <header className="topbar dashboard-topbar">
+          <div className="dashboard-search-wrap" onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node|null))setSearchOpen(false)}}>
+            <form className="dashboard-search" role="search" onSubmit={e=>{e.preventDefault();const match=workspace.trips.find(t=>(t.name+' '+t.location).toLocaleLowerCase().includes(tripSearch.trim().toLocaleLowerCase()));if(match&&!packing.busy){setWorkspace(w=>({...w,activeTripId:match.id}));setTab('Overview');setSearchOpen(false);setTripSearch('')}}}>
+              <Search size={21} aria-hidden="true"/><input aria-label={tr('Search your trips')} placeholder={tr('Search your trip…')} value={tripSearch} onFocus={()=>setSearchOpen(true)} onChange={e=>{setTripSearch(e.target.value);setSearchOpen(true)}} onKeyDown={e=>{if(e.key==='Escape')setSearchOpen(false)}} aria-expanded={searchOpen&&!!tripSearch.trim()} aria-controls="dashboard-trip-results"/>
+            </form>
+            {searchOpen&&!!tripSearch.trim()&&<div className="dashboard-search-results" id="dashboard-trip-results">{workspace.trips.filter(t=>(t.name+' '+t.location).toLocaleLowerCase().includes(tripSearch.trim().toLocaleLowerCase())).map(t=><button type="button" key={t.id} disabled={packing.busy} onClick={()=>{setWorkspace(w=>({...w,activeTripId:t.id}));setTab('Overview');setTripSearch('');setSearchOpen(false)}}><b>{t.name}</b><small>{t.location}</small></button>)}{!workspace.trips.some(t=>(t.name+' '+t.location).toLocaleLowerCase().includes(tripSearch.trim().toLocaleLowerCase()))&&<p role="status">{tr('No matching trips.')}</p>}</div>}
           </div>
           <div className="top-actions"><Link className="auth-link" href="/trips">{tr("Your trips")}</Link>
             <NotificationCenter
@@ -424,15 +409,40 @@ export default function Home(){
             )}
           </div>
         </header>
+        {tab!=='Overview'&&(<div className="dashboard-page-heading">
+            <div className="eyebrow">
+              {tr("YOUR NEXT ADVENTURE STARTS HERE")}
+            </div>
+            <h1>
+              {tr(
+                tab === "Overview"
+                  ? "Trip overview"
+                  : tab === "Itinerary"
+                    ? "Trip itinerary"
+                  : tab === "Packing list"
+                    ? "Packing checklist"
+                    : tab === "Bags & photos"
+                      ? "Bags & item locations"
+                      : tab === "Group chat"
+                        ? "Trip group chat"
+                        : tab === "Reminders"
+                          ? "Preparation reminders"
+                          : tab === "Members"
+                            ? "Your travel crew"
+                            : tab === "Budget"
+                              ? "Budget & expenses"
+                              : tab === "Weather & AI"
+                                ? "Weather & smart advice"
+                                : "Trip history",
+              )}
+            </h1>
+          </div>)}
   {notice&&<div className="notice"><span>{tr(notice,noticeParams)}</span><button onClick={()=>setNotice('')} aria-label={tr("Dismiss")}><X size={16}/></button></div>}
   {packing.error && tab!=='Packing list' && <p className="notice" role="alert">{tr(packing.error)}</p>}
   {memberToRemove && packing.loaded && packing.data && travelMembers.length>1 && <MemberRemovalDialog data={packing.data} next={reconcilePacking(packing.data,travelMembers.filter(m=>m.id!==memberToRemove.id),packingScope,packingUid)} removed={packing.data.members.filter(m=>m.id===memberToRemove.id)} legacyCount={active.items.filter(i=>i.assignee===memberToRemove.name).length} busy={packing.busy} onCancel={()=>setMemberToRemove(null)} onConfirm={()=>void confirmMemberRemoval()}/>}
   {!active&&tab!=='History'&&tab!=='Group chat'?<section className="empty-state"><TentTree size={42}/><h2>{tr("Ready to plan your next trip?")}</h2><p>{tr("Create a trip below to start your packing list.")}</p></section>:active&&<>
-  {tab==='Overview'&&<>
-   <section className="hero-card"><div className="hero-copy"><span className="pill"><span className="pill-dot"/>{tr(active.type).toUpperCase()} {tr('PLAN')}</span><h2>{active.name}</h2><p><CalendarDays size={16}/>{date(active.startDate)} → {date(active.endDate)}</p><p><Cloud size={16}/>{active.location}</p><div className="hero-buttons"><button className="light-button" onClick={()=>setTab('Packing list')}><ListChecks size={16}/> {tr("Open checklist")}</button><button className="history-delete" onClick={deleteActiveTrip}><Trash2 size={16}/> {tr('Delete trip')}</button></div></div><div className="hero-art"><div className="sun"/><div className="mountain mountain-back"/><div className="mountain mountain-front"/><div className="tiny-tent"><span/></div></div></section>
-   <div className="stats-grid"><Stat icon={<ListChecks/>} label={tr("Packing progress")} value={`${stats.packed}/${stats.total}`} sub={`${stats.total?Math.round(stats.packed/stats.total*100):0}% ${tr('packed')}`} color="purple"/><Stat icon={<ShoppingCart/>} label={tr("Still to buy")} value={String(stats.need)} sub={tr("items on your list")} color="orange"/><Stat icon={<Weight/>} label={tr("Total item weight")} value={`${stats.weight.toFixed(1)} kg`} sub={tr("across all items")} color="blue"/><Stat icon={<Wallet/>} label={tr("Purchased total")} value={yen(stats.spent)} sub={`${tr('budget')} ${yen(active.budget)}`} color="green"/></div>
-   <div className="content-grid"><section className="panel"><div className="panel-head"><div><h3>{tr("Pack your essentials")}</h3><p>{tr("Check off items as your group gets ready.")}</p></div><button className="text-button" onClick={()=>setTab('Packing list')}>{tr("View all")} <span>→</span></button></div><div className="progress-line"><span style={{width:`${stats.total?stats.packed/stats.total*100:0}%`}}/></div><div className="item-list">{packing.loaded && packing.data && packing.data.items.length>0 && <><p>{tr('Open the checklist to update each member or shared unit.')}</p>{packing.data.items.slice(0,5).map(item=><div className="quick-item" key={item.id}><span>{packingItemName(item,tr)}</span><small>{tr(item.type==='personal'?'Personal':'Shared')}</small><button className="text-button" onClick={()=>setTab('Packing list')}>{tr('Open checklist')}</button></div>)}</>}{active.items.slice(0,6).map(i=><div className="quick-item" key={i.id}><button className={`check-circle ${i.status==='Packed'?'checked':''}`} onClick={()=>changeStatus(i.id,i.status==='Packed'?'Owned':'Packed')}>{i.status==='Packed'&&<Check size={14}/>}</button><span className={i.status==='Packed'?'muted strike':''}>{i.name}</span><small>{i.assignee==='Unassigned'?tr('Unassigned'):i.assignee}</small><select value={i.status} onChange={e=>changeStatus(i.id,e.target.value as ItemStatus)} aria-label={tr("Status: {name}",{name:i.name})}>{(['Owned','Need to buy','Purchased','Packed'] as ItemStatus[]).map(s=><option key={s} value={s}>{tr(s)}</option>)}</select></div>)}</div></section><section className="panel"><div className="panel-head"><div><h3>{tr("Trip details")}</h3><p>{tr("Keep the essentials in one place.")}</p></div><CalendarDays size={20} className="muted-icon"/></div><div className="detail-list"><Detail label={tr("Destination")} value={active.location}/><Detail label={tr("Trip type")} value={tr(active.type)}/><Detail label={tr("Group size")} value={`${travelMembers.length} ${tr("members")}`}/><Detail label={tr("Budget per person")} value={yen(active.budget/Math.max(1,travelMembers.length))}/></div><div className="member-row">{travelMembers.slice(0,5).map((m,i)=><span className={`avatar avatar-${i%5}`} key={m.id} title={m.name}>{m.name.slice(0,1).toUpperCase()}</span>)}<button className="add-avatar" onClick={()=>setTab('Members')}><Plus size={15}/></button><span className="member-caption">{travelMembers.length} {tr("travelers")}</span></div><button className="wide-soft" onClick={()=>setTab('Members')}>{tr("Manage group members")} <span>→</span></button></section></div>
-  </>}
+  {tab==='Overview'&&<TravelDashboard key={active.id} trip={active} packed={stats.packed} total={stats.total} spent={stats.spent} onNavigate={setTab} onDeleteTrip={deleteActiveTrip}/>}
+  {tab==='Itinerary'&&<TripItinerary key={active.id} trip={active} onChange={activities=>updateTrip(t=>({...t,activities}))}/>}
   {tab==='Packing list'&&<><TripPacking packing={packing} tripType={active.type} key={`${active.id}:${active.sharedChatId||''}`} tripId={active.id} roomId={active.sharedChatId} userUid={user?.uid} members={travelMembers} bags={active.bags||[]} legacyItems={active.items}/><details className="panel legacy-packing"><summary>{tr("Legacy checklist / shopping management")}</summary>  <section className="panel page-panel"><div className="panel-head"><div><h3>{tr("Everything you need to bring")}</h3><p>{tr("Track ownership, shopping, weight and responsibility.")}</p></div><span className="count-badge">{active.items.length} {tr('items')}</span></div><form className="add-row" onSubmit={e=>{e.preventDefault();addItem()}}><input placeholder={tr("Add an item, e.g. portable charger")} value={itemName} onChange={e=>setItemName(e.target.value)}/><button className="primary" type="submit"><Plus size={16}/> {tr("Add item")}</button></form><div className="table-wrap"><table><thead><tr><th>{tr("Item")}</th><th>{tr("Status")}</th><th>{tr("Assigned to")}</th><th>{tr("Weight (kg)")}</th><th>{tr("Price (¥)")}</th><th>{tr("Comment")}</th><th></th></tr></thead><tbody>{active.items.map(i=><tr key={i.id}><td><b>{i.name}{(i.quantity||1)>1?` x ${i.quantity}`:null}</b><small className="cell-sub">{tr(i.category)}</small></td><td><select className={`status-select status-${i.status.replaceAll(' ','-').toLowerCase()}`} value={i.status} onChange={e=>changeStatus(i.id,e.target.value as ItemStatus)}>{(['Owned','Need to buy','Purchased','Packed'] as ItemStatus[]).map(s=><option key={s} value={s}>{tr(s)}</option>)}</select></td><td><select value={i.assignee} onChange={e=>updateTrip(t=>({...t,items:t.items.map(x=>x.id===i.id?{...x,assignee:e.target.value}:x)}))}><option value="Unassigned">{tr("Unassigned")}</option>{travelMembers.map(m=><option key={m.id}>{m.name}</option>)}</select></td><td><input className="table-input number" type="number" min="0" step="0.1" value={i.weight} onChange={e=>updateTrip(t=>({...t,items:t.items.map(x=>x.id===i.id?{...x,weight:Number(e.target.value)}:x)}))}/></td><td><input className="table-input number" type="number" min="0" step="1" value={i.price} onChange={e=>updateTrip(t=>({...t,items:t.items.map(x=>x.id===i.id?{...x,price:Number(e.target.value)}:x)}))}/></td><td><input className="table-input" placeholder={tr("Add note…")} value={i.comment} onChange={e=>updateTrip(t=>({...t,items:t.items.map(x=>x.id===i.id?{...x,comment:e.target.value}:x)}))}/></td><td><button className="icon-button danger" aria-label={tr("Delete {name}",{name:i.name})} onClick={()=>updateTrip(t=>({...t,items:t.items.filter(x=>x.id!==i.id)}))}><Trash2 size={15}/></button></td></tr>)}</tbody></table></div><div className="bottom-actions"><button className="soft-button" onClick={assignFairly}><Users size={16}/> {tr("Auto-assign unassigned")}</button><button className="soft-button" onClick={()=>{const csv=[['Item','Quantity','Type','Status','Assigned to','Weight (kg)','Price (¥)','Comment'].map(label=>tr(label)).join(','),...active.items.map(i=>[i.name,i.quantity||1,tr(i.category),tr(i.status),i.assignee==='Unassigned'?tr('Unassigned'):i.assignee,i.weight,i.price,i.comment].map(v=>`"${String(v).replaceAll('"','""')}"`).join(','))].join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}));a.download='motteku-packing-list.csv';a.click();URL.revokeObjectURL(a.href)}}><Download size={16}/> {tr("Export CSV")}</button></div></section></details></>}
    {tab==='Bags & photos'&&<BagPacking bags={active.bags||[]} items={active.items} chatId={active.sharedChatId} userUid={user?.uid} onBagsChange={bags=>{updateTrip(t=>({...t,bags}));if(memberAdmin)void packing.mutate(current=>({...current,bags}),(batch,parent)=>batch.update(parent,{bags,bagIds:bags.map(b=>b.id)}));}} onItemChange={(id,bagId,location)=>updateTrip(t=>({...t,items:t.items.map(i=>i.id===id?{...i,bagId,bagLocation:location}:i)}))} onSharedPlanChange={(bags,placements)=>updateTrip(t=>({...t,bags,items:t.items.map(i=>{const shared=placements.find(p=>p.name.toLowerCase()===i.name.toLowerCase());return shared?{...i,bagId:shared.bagId,bagLocation:shared.bagLocation}:i})}))} onNotice={setNotice}/>}
 
