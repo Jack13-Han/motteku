@@ -5,13 +5,15 @@ import { Backpack, BriefcaseBusiness, CalendarDays, Camera, Clock3, CloudSun, Fl
 import { useLanguage } from '@/lib/i18n';
 import { dashboardWeatherKey, departureStatus, loadDashboardWeather, packingProgress, weatherCondition } from '@/lib/dashboard';
 import { sortedActivities, type TripActivity } from '@/lib/itinerary';
+import TripCoverImage from './TripCoverImage';
+import type { TripCover } from '@/lib/tripCover';
 import type { WeatherForecast, WeatherPlace } from '@/lib/weather';
 
-type DashboardTrip = { id: string; name: string; type: string; location: string; startDate: string; endDate: string; budget: number; activities?: TripActivity[] };
-type Props = { trip: DashboardTrip; packed: number; total: number; spent: number; onNavigate: (tab: string) => void; onDeleteTrip?: () => void };
+type DashboardTrip = Partial<TripCover> & { id: string; name: string; type: string; location: string; startDate: string; endDate: string; budget: number; activities?: TripActivity[] };
+type Props = { trip: DashboardTrip; packed: number; total: number; spent: number; onNavigate: (tab: string) => void; onDeleteTrip?: () => void; coverAccountId?: string; onChangeCover?: (cover: TripCover) => void };
 type WeatherState = { key: string; status: 'loading' | 'ready' | 'error'; place?: WeatherPlace; forecast?: WeatherForecast };
 
-export default function TravelDashboard({ trip, packed, total, spent, onNavigate, onDeleteTrip }: Props) {
+export default function TravelDashboard({ trip, packed, total, spent, onNavigate, onDeleteTrip, coverAccountId, onChangeCover }: Props) {
   const { language, t, date } = useLanguage();
   const key = dashboardWeatherKey(trip, language);
   const [weather, setWeather] = useState<WeatherState>({ key: '', status: 'loading' });
@@ -40,7 +42,8 @@ export default function TravelDashboard({ trip, packed, total, spent, onNavigate
   };
   return <div className="travel-dashboard">
     <div className="travel-top-grid">
-      <section className="travel-hero" style={{ backgroundImage: 'url(/images/japan-travel-hero.webp)' }} aria-label={t('Your next adventure')}>
+      <section className="travel-hero" aria-label={t('Your next adventure')}>
+        <TripCoverImage key={coverAccountId} trip={trip} accountId={coverAccountId} onChange={onChangeCover} />
         {onDeleteTrip && <button type="button" className="travel-hero-delete" onClick={onDeleteTrip} aria-label={t('Delete trip')} title={t('Delete trip')}><Trash2 size={17} /></button>}
         <div className="travel-hero-content">
           <span className="travel-hero-kicker"><Sparkles size={15} />{t('Your next adventure')}</span>
