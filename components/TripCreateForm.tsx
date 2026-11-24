@@ -9,10 +9,11 @@ import { useLanguage } from '@/lib/i18n';
 import { errorKey } from '@/lib/messages';
 import { createDraftTrip } from '@/lib/tripService';
 import { tripTypeLabels, type TripInput } from '@/lib/trips';
+import AccommodationModeSelect from './AccommodationModeSelect';
 
 export default function TripCreateForm() {
   const { t } = useLanguage(), { user } = useTripAccount(), router = useRouter();
-  const [input, setInput] = useState<TripInput>({ name: '', type: 'camping', mode: 'group', destination: '', startDate: '', endDate: '', plannedMemberCount: 5, description: '' });
+  const [input, setInput] = useState<TripInput>({ name: '', type: 'camping', mode: 'group', destination: '', startDate: '', endDate: '', plannedMemberCount: 5, description: '', accommodationMode: 'single' });
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   return <TripWorkflowFrame title="Create a draft trip"><section className="panel page-panel">
     <p>{t(input.mode === 'group' ? 'Create the group and invite friends first. Choose the destination and dates after a friend accepts.' : 'Choose a single trip and enter its details. You can start packing without invitations.')}</p>
@@ -21,6 +22,7 @@ export default function TripCreateForm() {
         <label>{t('Trip mode')}<select value={input.mode} onChange={e => { const mode = e.target.value as TripInput['mode']; setInput({ ...input, mode, destination: mode === 'group' ? '' : input.destination, startDate: mode === 'group' ? '' : input.startDate, endDate: mode === 'group' ? '' : input.endDate, description: mode === 'group' ? '' : input.description, plannedMemberCount: mode === 'single' ? 1 : Math.max(2, input.plannedMemberCount) }); }}><option value="single">{t('Single')}</option><option value="group">{t('Group')}</option></select></label>
         <label>{t('Trip name')}<input required maxLength={200} value={input.name} onChange={e => setInput({ ...input, name: e.target.value })}/></label>
         <label>{t('Planned members')}<input type="number" min={input.mode === 'single' ? 1 : 2} max={100} step={1} required disabled={input.mode === 'single'} value={input.plannedMemberCount || ''} onChange={e => setInput({ ...input, plannedMemberCount: Number(e.target.value) })}/></label>
+        <AccommodationModeSelect value={input.accommodationMode || 'single'} onChange={accommodationMode => setInput({ ...input, accommodationMode })}/>
         {input.mode === 'single' && <>
           <label>{t('Trip type')}<select value={input.type} onChange={e => setInput({ ...input, type: e.target.value as TripInput['type'] })}>{Object.entries(tripTypeLabels).map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}</select></label>
           <label>{t('Destination')}<input required maxLength={200} value={input.destination} onChange={e => setInput({ ...input, destination: e.target.value })}/></label>

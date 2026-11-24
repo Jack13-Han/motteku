@@ -1,11 +1,12 @@
 import type { Timestamp } from 'firebase/firestore';
+import type { AccommodationMode, TravelTripSettings } from './travelChecks';
 
 export type TripStatus = 'draft' | 'recruiting' | 'confirmed' | 'completed';
 export type TripMemberRole = 'owner' | 'admin' | 'member';
 export type TripType = 'camping' | 'domestic' | 'overseas' | 'hiking' | 'beach' | 'other';
 export type TripMode = 'single' | 'group';
 export type PackingPhase = 'personal' | 'shared';
-export interface Trip {
+export interface Trip extends TravelTripSettings {
   id: string; name: string; type: TripType; destination: string; startDate: string; endDate: string;
   mode?: TripMode; packingPhase?: PackingPhase;
   tripDetailsReady?: boolean;
@@ -17,7 +18,7 @@ export interface TripMember {
   id: string; uid: string; tripId: string; name: string; role: TripMemberRole;
   invitationId: string; joinedAt: Timestamp;
 }
-export type TripInput = Pick<Trip, 'name' | 'type' | 'destination' | 'startDate' | 'endDate' | 'description' | 'plannedMemberCount'> & { mode: TripMode };
+export type TripInput = Pick<Trip, 'name' | 'type' | 'destination' | 'startDate' | 'endDate' | 'description' | 'plannedMemberCount'> & { mode: TripMode; accommodationMode?: AccommodationMode };
 export type InvitationPreview = Pick<Trip, 'name' | 'destination' | 'startDate' | 'endDate' | 'ownerName' | 'plannedMemberCount' | 'joinedMemberCount'> & { tripDetailsReady?: boolean };
 export interface TripInvitation {
   id: string; tripId: string; code: string; createdBy: string; expiresAt: Timestamp;

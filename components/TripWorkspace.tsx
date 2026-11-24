@@ -5,7 +5,8 @@ import { useLanguage } from '@/lib/i18n';
 import { errorKey } from '@/lib/messages';
 import { useManagedTrip, useTripAccount } from '@/lib/useTrips';
 import { usePacking } from '@/lib/usePacking';
-import { isCurrentAssignment, packingItemName, reconcilePacking } from '@/lib/packing';
+import { packingItemName, reconcilePacking } from '@/lib/packing';
+import { personalPackingReady } from '@/lib/stagedPacking';
 import { packingTemplates } from '@/lib/packingTemplates';
 import { templateTripTypes } from '@/lib/trips';
 import { completeTrip, confirmMembers, disableInvitation, issueInvitation, markPackingReady, openSharedPacking, setMemberRole } from '@/lib/tripService';
@@ -16,6 +17,10 @@ import WeatherAdvice from './WeatherAdvice';
 import { addAdviceItem } from '@/lib/addAdviceItem';
 import { Button } from './ui/button';
 import GroupPolls from './GroupPolls';
+import { useTravelChecks } from '@/lib/useTravelChecks';
+import { snapshotPackedAssignments } from '@/lib/travelChecks';
+import ForgottenItemCheck from './ForgottenItemCheck';
+import NextCheckCard from './NextCheckCard';
 
 const statusLabels = { draft: 'Draft', recruiting: 'Recruiting', confirmed: 'Confirmed', completed: 'Completed' };
 const roleLabels = { owner: 'Owner', admin: 'Admin', member: 'Member' };
@@ -38,12 +43,9 @@ export default function TripWorkspace({ tripId }: { tripId: string }) {
   const sharedTemplates = allTemplates.filter(({ template }) => template.type === 'shared');
   const buildPlan = () => packing.data && members.length ? reconcilePacking(packing.data, members.map(member => ({ id: member.uid, uid: member.uid, name: member.name })), tripId, user?.uid || '', phase === 'shared' ? allTemplates : initialTemplates) : null;
   const next = review ? buildPlan() : null;
-  const personalAssignments = packing.data?.assignments.filter(a => {
-    const item = packing.data?.items.find(value => value.id === a.itemId);
-    return !!item && item.type === 'personal' && isCurrentAssignment(item, a);
-  }) || [];
-  const personalReady = personalAssignments.length > 0 && personalAssignments.every(assignment => assignment.status !== 'not_ready');
+  const personalReady = !changed && packing.loaded && !packing.busy && personalPackingReady(packing.data, trip?.confirmedMemberIds || [], packing.synced);
   const controller = { ...packing, data: packing.data ? { ...packing.data, adminUids: members.filter(member => member.role === 'admin').map(member => member.uid) } : null };
+  const itemChecks = useTravelChecks(loaded ? tripId : '', tripId, user?.uid || '', controller, { ...trip, startDate: trip?.startDate || '', endDate: trip?.endDate || '' });
   async function act(action: () => Promise<unknown>) {
     if (locked) return;
     setBusy(true); state.setError(''); setNotice('');
@@ -58,6 +60,7 @@ export default function TripWorkspace({ tripId }: { tripId: string }) {
     await openSharedPacking(tripId);
     const plan = reconcilePacking(packing.data, confirmed.map(member => ({ id: member.uid, uid: member.uid, name: member.name })), tripId, user?.uid || '', sharedTemplates);
     if (!await packing.commitPlan(plan)) throw new Error('Could not create the shared packing list. Use Resume generation to retry.');
+    await markPackingReady(tripId, confirmed.map(member => member.uid));
   }
   return <TripWorkflowFrame title="Trip workspace">
     {state.error && <p className="notice" role="alert">{t(state.error)}</p>}
@@ -85,7 +88,7 @@ export default function TripWorkspace({ tripId }: { tripId: string }) {
           {trip.status === 'confirmed' && !trip.packingReady && !changed && manager && <><p>{t('Checklist generation is not finished. Resume without resetting existing checks.')}</p><Button disabled={locked || !packing.loaded} onClick={() => setReview(true)}>{t('Resume generation')}</Button></>}
         </section>
       </div>
-      {trip.mode === 'group' && !detailsReady && (manager && members.length >= 2
+      {trip.mode !== 'single' && !detailsReady && (manager && members.length >= 2
         ? <TripDetailsForm tripId={tripId} plannedMemberCount={trip.plannedMemberCount}/>
         : <section className="panel page-panel"><h2>{t('Choose your trip')}</h2><p>{t(members.length < 2 ? 'Invite friends and wait for one to accept before choosing the destination.' : 'Waiting for the trip owner to choose the destination and dates.')}</p></section>)}
       <GroupPolls key={`${tripId}:${user?.uid || ''}`} kind="trip" scopeId={tripId} uid={user?.uid || ''} userName={members.find(member => member.uid === user?.uid)?.name || user?.displayName || ''} canManage={manager} disabled={locked || trip.status === 'completed'}/>
@@ -94,7 +97,7 @@ export default function TripWorkspace({ tripId }: { tripId: string }) {
         trip={{id:trip.id,name:trip.name,type:templateTripTypes[trip.type],location:trip.destination,startDate:trip.startDate,endDate:trip.endDate,people:members.length}}
         items={(packing.loaded ? packing.data?.items || [] : []).map(item=>({name:packingItemName(item,t),type:item.type,quantity:item.quantity}))}
         onAddItem={(name,type)=>addAdviceItem(controller,tripId,user?.uid || '',name,type)}
-        canAddItems={manager && trip.mode === 'group' && phase === 'shared' && trip.status === 'confirmed' && trip.packingReady && packing.loaded && !locked}
+        canAddItems={manager && (trip.mode === 'single' || phase === 'shared') && trip.status === 'confirmed' && trip.packingReady && packing.loaded && !locked}
         adding={locked}
       />}
       {review && next && packing.data && <div className="member-removal-backdrop"><section className="panel page-panel member-removal-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-members-title">
@@ -114,6 +117,8 @@ export default function TripWorkspace({ tripId }: { tripId: string }) {
       {(trip.status === 'confirmed' || trip.status === 'completed') && trip.packingReady && <>
         {manager && trip.status !== 'completed' && <section className="panel page-panel"><form className="add-row" onSubmit={e => { e.preventDefault(); if (!packing.data || !bagName.trim() || locked) return; const bags = [...packing.data.bags, { id: crypto.randomUUID(), name: bagName.trim() }]; void act(async () => { const saved = await packing.mutate(current => ({ ...current, bags }), (batch, parent) => batch.update(parent, { bags, bagIds: bags.map(bag => bag.id) })); if (!saved) throw new Error('Could not save changes.'); setBagName(''); }); }}><label className="field-label">{t('Bag name')}<input required maxLength={200} value={bagName} onChange={e => setBagName(e.target.value)} disabled={locked}/></label><Button type="submit" disabled={locked}>{t('Add bag')}</Button></form></section>}
         <TripPacking managed managedStage={phase} canOpenShared={personalReady} isSingleTrip={trip.mode === 'single'} onOpenShared={manager && trip.mode !== 'single' ? () => void act(continueToShared) : undefined} readOnly={trip.status === 'completed' || busy} tripId={tripId} tripType={templateTripTypes[trip.type]} packing={controller} userUid={user?.uid} members={confirmed} bags={packing.data?.bags || []} legacyItems={[]}/>
+        <NextCheckCard controller={itemChecks} packedCount={packing.data ? snapshotPackedAssignments(packing.data).length : 0} onOpen={() => document.getElementById('managed-item-check')?.scrollIntoView({ behavior: 'smooth' })}/>
+        <div id="managed-item-check"><ForgottenItemCheck controller={itemChecks} packing={controller.data} uid={user?.uid || ''} startDate={trip.startDate} endDate={trip.endDate}/></div>
       </>}
       {role === 'owner' && trip.status !== 'completed' && <div className="mt-5"><Button variant="outline" disabled={locked} onClick={() => void act(() => completeTrip(tripId))}>{t('Complete trip')}</Button></div>}
     </>}

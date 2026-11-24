@@ -100,14 +100,15 @@ export async function updateTripDetails(tripId: string, details: Pick<TripInput,
   await runTransaction(db, async tx => {
     const snap = await tx.get(ref); if (!snap.exists()) throw new Error('Trip could not be loaded.');
     const trip = snap.data() as Trip;
-    if (trip.mode !== 'group' || trip.joinedMemberCount < 2 || trip.status === 'completed') throw new Error('A friend must accept the invitation before choosing trip details.');
+    if (trip.mode !== 'group' || trip.joinedMemberCount < 2 || trip.tripDetailsReady !== false || !['draft', 'recruiting'].includes(trip.status)) throw new Error('A friend must accept the invitation before choosing trip details.');
     validateTrip({ ...trip, ...details, mode: 'group' } as TripInput);
     const activeInviteRef = trip.activeInviteId ? doc(db, 'tripInvitations', trip.activeInviteId) : null;
     const activeInvite = activeInviteRef ? await tx.get(activeInviteRef) : null;
     tx.update(ref, { ...details, tripDetailsReady: true, updatedAt: serverTimestamp() });
     if (activeInviteRef && activeInvite?.exists()) {
       const preview = activeInvite.data().preview as TripInvitation['preview'];
-      tx.update(activeInviteRef, { preview: { ...preview, ...details, tripDetailsReady: true } });
+      // The public invitation projection deliberately excludes private description/type fields.
+      tx.update(activeInviteRef, { preview: { ...preview, destination: details.destination, startDate: details.startDate, endDate: details.endDate, tripDetailsReady: true } });
     }
   });
 }
@@ -116,8 +117,9 @@ export async function openSharedPacking(tripId: string) {
   await runTransaction(db, async tx => {
     const snap = await tx.get(ref); if (!snap.exists()) throw new Error('Trip could not be loaded.');
     const trip = snap.data() as Trip;
-    if (trip.status !== 'confirmed' || !trip.packingReady || (trip.packingPhase || 'shared') !== 'personal') throw new Error('Finish the personal packing step first.');
-    tx.update(ref, { packingPhase: 'shared', updatedAt: serverTimestamp() });
+    if (trip.mode === 'single' || trip.status !== 'confirmed' || !trip.packingReady || (trip.packingPhase || 'shared') !== 'personal') throw new Error('Finish the personal packing step first.');
+    // Until generation is acknowledged, the existing Resume generation flow remains available.
+    tx.update(ref, { packingPhase: 'shared', packingReady: false, updatedAt: serverTimestamp() });
   });
 }
 export async function markPackingReady(tripId: string, expectedIds: string[]) {
