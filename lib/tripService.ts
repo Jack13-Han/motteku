@@ -7,11 +7,11 @@ function database(): Firestore { if (!db) throw new Error('Firebase Authenticati
 function account(user: User | null): User { if (!user || user.isAnonymous) throw new Error('Sign in with an account to manage trips.'); return user; }
 export function accountName(user: User) { return (user.displayName?.trim() || user.email?.split('@')[0] || user.uid).slice(0, 200); }
 export async function createDraftTrip(input: TripInput, current: User | null) {
-  validateTrip(input);
+  validateTrip(input, input.mode === 'group');
   const user = account(current), db = database(), ref = doc(collection(db, 'trips'));
   const name = accountName(user);
   await runTransaction(db, async tx => {
-    tx.set(ref, { ...input, name: input.name.trim(), destination: input.destination.trim(), id: ref.id, ownerUid: user.uid, ownerName: name, status: 'draft', joinedMemberCount: 1, activeInviteId: '', confirmedMemberIds: [], packingReady: false, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    tx.set(ref, { ...input, name: input.name.trim(), destination: input.destination.trim(), id: ref.id, ownerUid: user.uid, ownerName: name, tripDetailsReady: input.mode === 'single', packingPhase: 'personal', status: 'draft', joinedMemberCount: 1, activeInviteId: '', confirmedMemberIds: [], packingReady: false, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
     tx.set(doc(ref, 'tripMembers', user.uid), { id: user.uid, uid: user.uid, tripId: ref.id, name, role: 'owner', invitationId: '', joinedAt: serverTimestamp() });
     tx.set(doc(db, 'users', user.uid, 'tripMemberships', ref.id), { tripId: ref.id, uid: user.uid, joinedAt: serverTimestamp() });
     const parent = doc(db, 'packingTrips', ref.id);
@@ -31,12 +31,13 @@ export async function issueInvitation(tripId: string, current: User | null) {
   await runTransaction(db, async tx => {
     const snap = await tx.get(ref); if (!snap.exists()) throw new Error('Trip could not be loaded.');
     const trip = snap.data() as Trip;
+    if (trip.mode === 'single') throw new Error('Single trips do not use invitations.');
     const invitation = doc(db, 'tripInvitations', id);
     if ((await tx.get(invitation)).exists()) throw new Error('Could not create an invitation. Please try again.');
     if (trip.status === 'completed') throw new Error('This trip is completed.');
     if (trip.activeInviteId) tx.update(doc(db, 'tripInvitations', trip.activeInviteId), { isActive: false });
     const { name, destination, startDate, endDate, ownerName, plannedMemberCount, joinedMemberCount } = trip;
-    tx.set(invitation, { id, code, tripId, createdBy: user.uid, usedCount: 0, maxUses: 99, isActive: true, expiresAt: Timestamp.fromMillis(Date.now() + 7 * 86400000), createdAt: serverTimestamp(), preview: { name, destination, startDate, endDate, ownerName, plannedMemberCount, joinedMemberCount } });
+    tx.set(invitation, { id, code, tripId, createdBy: user.uid, usedCount: 0, maxUses: 99, isActive: true, expiresAt: Timestamp.fromMillis(Date.now() + 7 * 86400000), createdAt: serverTimestamp(), preview: { name, destination, startDate, endDate, ownerName, plannedMemberCount, joinedMemberCount, tripDetailsReady: trip.tripDetailsReady !== false } });
     tx.update(ref, { activeInviteId: id, status: trip.status === 'draft' ? 'recruiting' : trip.status, updatedAt: serverTimestamp() });
   });
   return id;
@@ -63,10 +64,18 @@ export async function joinTrip(raw: string, current: User | null) {
     if (!invitationUsable(invite)) throw new Error('This invitation is invalid, expired or full.');
     const tripRef = doc(db, 'trips', invite.tripId), memberRef = doc(tripRef, 'tripMembers', user.uid);
     // The member document is readable by its prospective owner even before joining.
-    if ((await tx.get(memberRef)).exists()) throw new Error('You have already joined this trip.');
+    const [existingMember, creatorMember] = await Promise.all([
+      tx.get(memberRef), tx.get(doc(tripRef, 'tripMembers', invite.createdBy)),
+    ]);
+    if (existingMember.exists()) throw new Error('You have already joined this trip.');
+    if (!creatorMember.exists()) throw new Error('The person who sent this invitation is no longer a trip member.');
     // Only invitation projection is readable until membership is committed; Rules validate the trip increment.
     tx.set(memberRef, { id: user.uid, uid: user.uid, tripId: invite.tripId, name: accountName(user), role: 'member', invitationId: id, joinedAt: serverTimestamp() });
     tx.set(doc(db, 'users', user.uid, 'tripMemberships', invite.tripId), { tripId: invite.tripId, uid: user.uid, joinedAt: serverTimestamp() });
+    // Accepting an invitation creates a reciprocal friend connection with its sender.
+    const acceptedName = accountName(user), creatorName = String(creatorMember.data().name || invite.preview.ownerName);
+    tx.set(doc(db, 'users', user.uid, 'friends', invite.createdBy), { uid: invite.createdBy, name: creatorName, tripId: invite.tripId, createdAt: serverTimestamp() });
+    tx.set(doc(db, 'users', invite.createdBy, 'friends', user.uid), { uid: user.uid, name: acceptedName, tripId: invite.tripId, createdAt: serverTimestamp() });
     tx.update(inviteRef, { usedCount: increment(1), 'preview.joinedMemberCount': increment(1) });
     // Server transforms keep counters atomic without exposing the private trip before membership.
     tx.update(tripRef, { joinedMemberCount: increment(1), updatedAt: serverTimestamp() });
@@ -77,11 +86,38 @@ export async function confirmMembers(tripId: string, memberIds: string[], initia
   const db = database(), ref = doc(db, 'trips', tripId);
   await runTransaction(db, async tx => {
     const trip = (await tx.get(ref)).data() as Trip;
+    if (trip.mode === 'group' && trip.tripDetailsReady === false) throw new Error('Choose the destination and dates after a friend accepts the invitation.');
     if (initial && trip.status === 'confirmed') throw new Error('Members changed. Review the list again.');
     if (trip.joinedMemberCount !== memberIds.length || new Set(memberIds).size !== memberIds.length) throw new Error('Members changed. Review the list again.');
     const members = await Promise.all(memberIds.map(id => tx.get(doc(ref, 'tripMembers', id))));
     if (members.some(member => !member.exists())) throw new Error('Members changed. Review the list again.');
-    tx.update(ref, { status: 'confirmed', confirmedMemberIds: memberIds, packingReady: false, updatedAt: serverTimestamp() });
+    const phase = initial ? 'personal' : trip.packingPhase || (trip.packingReady ? 'shared' : 'personal');
+    tx.update(ref, { status: 'confirmed', confirmedMemberIds: memberIds, packingReady: false, packingPhase: phase, updatedAt: serverTimestamp() });
+  });
+}
+export async function updateTripDetails(tripId: string, details: Pick<TripInput, 'type' | 'destination' | 'startDate' | 'endDate' | 'description'>) {
+  const db = database(), ref = doc(db, 'trips', tripId);
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref); if (!snap.exists()) throw new Error('Trip could not be loaded.');
+    const trip = snap.data() as Trip;
+    if (trip.mode !== 'group' || trip.joinedMemberCount < 2 || trip.status === 'completed') throw new Error('A friend must accept the invitation before choosing trip details.');
+    validateTrip({ ...trip, ...details, mode: 'group' } as TripInput);
+    const activeInviteRef = trip.activeInviteId ? doc(db, 'tripInvitations', trip.activeInviteId) : null;
+    const activeInvite = activeInviteRef ? await tx.get(activeInviteRef) : null;
+    tx.update(ref, { ...details, tripDetailsReady: true, updatedAt: serverTimestamp() });
+    if (activeInviteRef && activeInvite?.exists()) {
+      const preview = activeInvite.data().preview as TripInvitation['preview'];
+      tx.update(activeInviteRef, { preview: { ...preview, ...details, tripDetailsReady: true } });
+    }
+  });
+}
+export async function openSharedPacking(tripId: string) {
+  const db = database(), ref = doc(db, 'trips', tripId);
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref); if (!snap.exists()) throw new Error('Trip could not be loaded.');
+    const trip = snap.data() as Trip;
+    if (trip.status !== 'confirmed' || !trip.packingReady || (trip.packingPhase || 'shared') !== 'personal') throw new Error('Finish the personal packing step first.');
+    tx.update(ref, { packingPhase: 'shared', updatedAt: serverTimestamp() });
   });
 }
 export async function markPackingReady(tripId: string, expectedIds: string[]) {

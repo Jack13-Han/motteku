@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { Gift, Plus, Search, Sparkles, Users } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n';
 import { errorKey } from '@/lib/messages';
 import { collection, doc, getDocs, serverTimestamp, Timestamp } from 'firebase/firestore';
@@ -9,10 +10,14 @@ import type { usePacking } from '@/lib/usePacking';
 import { packingTemplates } from '@/lib/packingTemplates';
 import PackingCards from './PackingCards';
 import MemberRemovalDialog from './MemberRemovalDialog';
-import { canEditAssignment, createPackingItem, reconcilePacking, STATUS_LABELS, type ItemAssignment, type ItemStatus, type PackingBag, type Registration, type TripItem } from '@/lib/packing';
+import { canEditAssignment, createPackingItem, isCurrentAssignment, reconcilePacking, STATUS_LABELS, type ItemAssignment, type ItemStatus, type PackingBag, type Registration, type TripItem } from '@/lib/packing';
 
 type Props = {
   managed?: boolean;
+  managedStage?: 'personal' | 'shared';
+  onOpenShared?: () => void;
+  canOpenShared?: boolean;
+  isSingleTrip?: boolean;
   readOnly?: boolean;
   tripId: string;
   tripType: string;
@@ -26,18 +31,22 @@ type Props = {
 const emptyUnit = () => ({ memberId: '', status: 'not_ready' as ItemStatus, bagId: '' });
 const initialForm = (): Registration => ({ name: '', type: 'personal', targetMemberIds: [], units: [emptyUnit()], status: 'not_ready', bagId: '' });
 
-export default function TripPacking({ tripId, tripType, packing, managed = false, readOnly = false, roomId = '', userUid, members, bags, legacyItems }: Props) {
+export default function TripPacking({ tripId, tripType, packing, managed = false, managedStage, onOpenShared, canOpenShared = false, isSingleTrip = false, readOnly = false, roomId = '', userUid, members, bags, legacyItems }: Props) {
   const { t } = useLanguage();
   const uid = userUid || (firebaseConfigured ? '' : 'local-owner');
   const scope = managed ? tripId : roomId || `${uid}_${tripId}`;
   const { data, error, setError, busy, loaded, roomMembers, cloud, mutate, commitPlan } = packing;
   const [reviewRoster, setReviewRoster] = useState(false);
+  const registrationRef = useRef<HTMLDetailsElement>(null);
   const [form, setForm] = useState<Registration>(initialForm);
   const [all, setAll] = useState(true);
   const [onlyNotReady, setOnlyNotReady] = useState(false);
+  const [filterType, setFilterType] = useState<'all' | 'personal' | 'shared'>('all');
+  const [query, setQuery] = useState('');
   const admin = !!data && (data.ownerUid === uid || data.adminUids.includes(uid));
   const disabled = busy || !loaded || readOnly;
   const roster = data?.members.filter(m => m.active !== false) || [];
+  const canAddOwnPersonal = managed && roster.some(m => m.id === uid);
   const packingBags = data?.bags || [];
   const statusOptions = Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{t(label)}</option>);
   const memberOptions = roster.map(m => <option key={m.id} value={m.id}>{m.name}</option>);
@@ -45,9 +54,10 @@ export default function TripPacking({ tripId, tripType, packing, managed = false
 
   function register(e: React.FormEvent) {
     e.preventDefault();
-    if (!data || !admin) return;
+    if (!data || (!admin && !canAddOwnPersonal)) return;
     try {
-      const result = createPackingItem(scope, uid, { ...form, targetMemberIds: all ? roster.map(m => m.id) : form.targetMemberIds }, roster, packingBags, crypto.randomUUID());
+      const personalOnly = managed && (!admin || managedStage === 'personal');
+      const result = createPackingItem(scope, uid, { ...form, type: personalOnly ? 'personal' : form.type, targetMemberIds: personalOnly ? [uid] : all ? roster.map(m => m.id) : form.targetMemberIds }, roster, packingBags, crypto.randomUUID());
       void mutate(current => ({ ...current, items: [...current.items, result.item], assignments: [...current.assignments, ...result.assignments] }), (batch, parent) => {
         batch.set(doc(parent, 'items', result.item.id), { ...result.item, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
         result.assignments.forEach(a => batch.set(doc(parent, 'itemAssignments', a.id), { ...a, updatedAt: serverTimestamp() }));
@@ -75,7 +85,8 @@ export default function TripPacking({ tripId, tripType, packing, managed = false
   function generateTemplates() {
     if (!data || !admin) return;
     try {
-      void commitPlan(reconcilePacking(data, roster, scope, uid, (packingTemplates[tripType] || []).map(template => ({ template }))));
+      const templates = (packingTemplates[tripType] || []).filter(template => !managed || template.type === (managedStage || 'shared'));
+      void commitPlan(reconcilePacking(data, roster, scope, uid, templates.map(template => ({ template }))));
     } catch (e) { setError(errorKey(e, 'Check your input.')); }
   }
 
@@ -120,12 +131,27 @@ export default function TripPacking({ tripId, tripType, packing, managed = false
     } catch { setError("Could not read private items. Create the private checklist and check Firestore permissions."); }
   }
 
-  return <section className="panel page-panel packing-v2">
-    <div className="panel-head"><div><h3>{t("Personal and shared items")}</h3><p>{t(cloud ? "Saved and synced with Firestore." : "Local demo: saved in this browser.")} {t("Ready and packed counts are shown separately.")}</p></div></div>
+  const totalUnits = data?.assignments.filter(a => data.items.some(item => item.id === a.itemId && isCurrentAssignment(item, a))).length || 0;
+  const packedUnits = data?.assignments.filter(a => a.status === 'packed' && data.items.some(item => item.id === a.itemId && isCurrentAssignment(item, a))).length || 0;
+  const readyUnits = data?.assignments.filter(a => a.status !== 'not_ready' && data.items.some(item => item.id === a.itemId && isCurrentAssignment(item, a))).length || 0;
+  const percentPacked = totalUnits ? Math.round(packedUnits / totalUnits * 100) : 0;
+
+  return <section className="packing-dashboard">
+    {managed && managedStage && <div className="packing-stage-note"><div><strong>{t(managedStage === 'personal' ? 'Step 1 · Personal packing' : 'Step 2 · Group packing')}</strong><p>{t(managedStage === 'personal' ? isSingleTrip ? 'This is your personal trip checklist.' : 'Choose and prepare your own items first. Your updates sync for the trip members.' : 'Personal packing is saved. Add and prepare the items everyone will share.')}</p></div>{managedStage === 'personal' && onOpenShared && <button className="primary" type="button" disabled={disabled || !canOpenShared} onClick={onOpenShared}>{t('Open shared items')}</button>}{managedStage === 'personal' && !onOpenShared && !isSingleTrip && <small>{t('The trip owner opens shared items after everyone is ready.')}</small>}</div>}
+    <div className="packing-banner">
+      <div className="packing-banner-copy"><span className="packing-suitcase" aria-hidden="true">🧳</span><div><h2>{t('Packing List')}</h2><p>{t("Don't forget anything for your amazing trip!")}</p></div></div>
+      <div className="packing-banner-mountains" aria-hidden="true"><span className="packing-mountain far-left"/><span className="packing-mountain far-right"/><span className="packing-mountain middle"/><span className="packing-mountain fuji"/></div>
+      <div className="packing-banner-doodle" aria-hidden="true"><span>♡</span><span>✈</span><span className="packing-banner-cat">🐱🎒</span></div>
+    </div>
     {error && <p className="notice" role="alert">{t(error)}</p>}
     {!loaded && !error && <p role="status">{t("Loading packing items…")}</p>}
     {busy && <p role="status">{t("Saving…")}</p>}
     {data && loaded && <>
+      <div className="packing-summary-grid">
+        <section className="panel packing-summary-progress"><div className="packing-ring" style={{'--packing-progress': `${percentPacked}%`} as React.CSSProperties}><div><strong>{percentPacked}%</strong><span>{t('Packed')}</span></div></div><div className="packing-summary-copy"><h3>{t('Packing Progress')}</h3><strong>{packedUnits} / {totalUnits} {t('items')}</strong><div className="packing-summary-bar"><span style={{width: `${percentPacked}%`}}/></div><div className="packing-summary-pills"><span className="ready">✓ {readyUnits} {t('Ready')}</span><span className="prepare">♙ {Math.max(0, totalUnits-readyUnits)} {t('To Prepare')}</span><span className="pending">◉ {Math.max(0, readyUnits-packedUnits)} {t('Pending')}</span></div></div></section>
+        <section className="panel packing-quick-filters"><h3>{t('Quick Filters')}</h3><div className="packing-filter-buttons">{(managedStage === 'personal' ? ['personal'] as const : ['all','personal','shared'] as const).map(type=><button key={type} className={(managedStage==='personal'||filterType===type)?'selected':''} onClick={()=>setFilterType(type)}>{type==='all'?'▦':type==='personal'?'♙':'♧'} {t(type==='all'?'All Items':type==='personal'?'Personal':'Shared')}</button>)}</div><label className="packing-only-toggle"><input type="checkbox" checked={onlyNotReady} onChange={e=>setOnlyNotReady(e.target.checked)}/><span>{t('Unpacked Only')}</span></label></section>
+        <aside className="panel packing-tip-card"><Sparkles size={17}/><h3>{t('Travel Tips')}</h3><p>{t('Check the weather and bring a light jacket!')}</p><span className="packing-tip-illustration" aria-hidden="true">🧥</span></aside>
+      </div>
       {!managed && <details className="packing-settings"><summary>{t("Members, bags and permissions")}</summary>
         <p>{t("Signed-in UID")}: <code>{uid}</code>. {t("You can update your own status. Owners and admins can manage everyone.")}</p>
         {admin && <>
@@ -151,19 +177,19 @@ export default function TripPacking({ tripId, tripType, packing, managed = false
       {reviewRoster && members.length > 0 && <MemberRemovalDialog data={data} next={reconcilePacking(data, members, scope, uid)} removed={roster.filter(m => !members.some(next => next.id === m.id))} busy={busy} onCancel={() => setReviewRoster(false)} onConfirm={() => {
         void commitPlan({ ...reconcilePacking(data, members, scope, uid), bags }).then(saved => { if (saved) setReviewRoster(false); });
       }}/>}
-      {admin && !managed && <div className="packing-registration"><h4>{t('Generate from template')}</h4><p>{t('Members: {count}', { count: roster.length })} · {t(tripType)}</p><button className="primary" disabled={disabled || !roster.length} onClick={generateTemplates}>{t('Generate or recalculate')}</button><p>{t('Existing checks, assignees and bags are preserved.')}</p></div>}
-      {admin && <form className="packing-registration" onSubmit={register}>
+      {admin && !managed && <div className="packing-template-note">{t('Members: {count}', { count: roster.length })} · {t(tripType)}. {t('Existing checks, assignees and bags are preserved.')}</div>}
+      {(admin || canAddOwnPersonal) && <details className="packing-registration-details" ref={registrationRef}><summary><Plus size={16}/>{t('Add Item')}</summary><form className="packing-registration" onSubmit={register}>
         <h4>{t("Item registration")}</h4>
         <fieldset disabled={disabled}>
           <div className="packing-form-grid">
             <label>{t("Item name")}<input required maxLength={200} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}/></label>
-            <label>{t("Type")}<select value={form.type} onChange={e => setForm({ ...form, type: e.target.value as Registration['type'] })}><option value="personal">{t("Personal")}</option><option value="shared">{t("Shared")}</option></select></label>
+            {(!canAddOwnPersonal || (admin && managedStage === 'shared')) && <label>{t("Type")}<select value={form.type} onChange={e => setForm({ ...form, type: e.target.value as Registration['type'] })}><option value="personal">{t("Personal")}</option>{(!managed || managedStage === 'shared') && <option value="shared">{t("Shared")}</option>}</select></label>}
           </div>
           {form.type === 'personal' ? <>
-            <h4>{t("Target members")}</h4>
+            {!canAddOwnPersonal && <><h4>{t("Target members")}</h4>
             <label className="packing-check"><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)}/>{t("Everyone")}</label>
             {!all && roster.map(m => <label className="packing-check" key={m.id}><input type="checkbox" checked={form.targetMemberIds.includes(m.id)} onChange={e => setForm({ ...form, targetMemberIds: e.target.checked ? [...form.targetMemberIds, m.id] : form.targetMemberIds.filter(id => id !== m.id) })}/>{m.name}</label>)}
-            <p>{t("Members: {count}", { count: all ? roster.length : form.targetMemberIds.length })}</p>
+            <p>{t("Members: {count}", { count: all ? roster.length : form.targetMemberIds.length })}</p></>}
             <div className="packing-form-grid"><label>{t("Initial status")}<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as ItemStatus })}>{statusOptions}</select></label><label>{t("Bag (each member can change it later)")}<select value={form.bagId} onChange={e => setForm({ ...form, bagId: e.target.value })}>{bagOptions}</select></label></div>
           </> : <>
             <label>{t("Required")}<input type="number" min="1" max="100" step="1" required value={form.units.length} onChange={e => {
@@ -179,14 +205,16 @@ export default function TripPacking({ tripId, tripType, packing, managed = false
           </>}
           <div className="bottom-actions"><button className="primary" type="submit" disabled={!roster.length}>{t("Add item")}</button><button className="soft-button" type="button" onClick={() => { setForm(initialForm()); setAll(true); }}>{t("Clear input")}</button></div>
         </fieldset>
-      </form>}
-      <PackingCards data={data} uid={uid} admin={admin} disabled={disabled} onlyUnpacked={onlyNotReady} onFilter={setOnlyNotReady} onUpdate={updateAssignment} onDelete={item => {
+      </form></details>}
+      <div className="packing-workspace-grid"><section className="panel packing-list-panel"><div className="packing-list-toolbar"><div className="packing-list-actions"><button className="primary" disabled={(!admin&&!canAddOwnPersonal)||disabled} onClick={()=>{if(registrationRef.current)registrationRef.current.open=true;registrationRef.current?.scrollIntoView({behavior:'smooth',block:'center'});}}><Plus size={17}/>{t('Add Item')}</button>{admin&&<button className="soft-button" disabled={disabled || !roster.length} onClick={generateTemplates}><Gift size={16}/>{t('Use Template')}</button>}</div><label className="packing-search"><Search size={16}/><input aria-label={t('Search items')} placeholder={t('Search items...')} value={query} onChange={e=>setQuery(e.target.value)}/></label></div>
+      <PackingCards data={data} uid={uid} admin={admin} disabled={disabled} onlyUnpacked={onlyNotReady} filterType={filterType} query={query} managedStage={managedStage} onFilter={setOnlyNotReady} onUpdate={updateAssignment} onDelete={item => {
         const allRows = data.assignments.filter(a => a.itemId === item.id);
         return mutate(current => ({ ...current, items: current.items.filter(i => i.id !== item.id), assignments: current.assignments.filter(a => a.itemId !== item.id) }), (batch, parent) => {
           batch.delete(doc(parent, 'items', item.id));
           allRows.forEach(a => batch.delete(doc(parent, 'itemAssignments', a.id)));
         });
-      }}/>
+      }}/></section><aside className="panel packing-members-panel"><h3><Users size={18}/>{t('Packing by Member')}</h3>{roster.map((member,index)=>{const own=data.assignments.filter(a=>a.memberId===member.id&&data.items.some(item=>item.id===a.itemId&&isCurrentAssignment(item,a)));const done=own.filter(a=>a.status==='packed').length;const pct=own.length?Math.round(done/own.length*100):0;return <div className="packing-member-progress" key={member.id}><span className={`packing-member-avatar avatar-${index%5}`}>{member.name.slice(0,1).toUpperCase()}</span><strong>{member.name}</strong><div><span style={{width:`${pct}%`}}/></div><b>{pct}%</b></div>})}</aside></div>
+      <div className="packing-journey-banner"><span>🌸</span><strong>{t('Happy Journey!')}</strong><span>🧳</span></div>
       {admin && legacyItems.length > 0 && <details className="packing-settings"><summary>{t("Import legacy checklist")}</summary><p>{t("Copies up to 3 assigned legacy items as shared items without changing the original list. Register personal items above. Previously imported items are skipped.")}</p><button className="soft-button" disabled={disabled || legacyItems.every(i => data.items.some(item => item.id === `legacy-${i.id}`))} onClick={importLegacy}>{t("Copy next 3 items")}</button></details>}
     </>}
   </section>;

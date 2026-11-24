@@ -21,13 +21,20 @@ function TripCard({ id }: { id: string }) {
 export default function TripDirectory() {
   const { user } = useTripAccount(), { t } = useLanguage(), router = useRouter();
   const [ids, setIds] = useState<string[]>([]), [loaded, setLoaded] = useState(false), [error, setError] = useState(''), [code, setCode] = useState('');
+  const [friends, setFriends] = useState<{ uid: string; name: string; tripId: string }[]>([]);
   useEffect(() => {
     setIds([]); setLoaded(false);
     if (!db || !user) return;
     return onSnapshot(collection(db, 'users', user.uid, 'tripMemberships'), snap => { setIds(snap.docs.map(d => d.id)); setLoaded(true); }, () => { setError('Trips could not be loaded. Check Firestore rules.'); setLoaded(true); });
   }, [user?.uid]);
+  useEffect(() => {
+    setFriends([]);
+    if (!db || !user) return;
+    return onSnapshot(collection(db, 'users', user.uid, 'friends'), snap => setFriends(snap.docs.map(friend => friend.data() as { uid: string; name: string; tripId: string })), () => setError('Friends could not be loaded. Check Firestore rules.'));
+  }, [user?.uid]);
   return <TripWorkflowFrame title="Your trips">
     <div className="mb-5 flex flex-wrap gap-3"><Button asChild><Link href="/trips/new">{t('Create a draft trip')}</Link></Button></div>
+    <section className="panel page-panel"><h2>{t('Friends')}</h2><p>{t('Friends who accepted your trip invitation appear here.')}</p>{friends.length ? <ul className="managed-members">{friends.map(friend=><li key={friend.uid}><strong>{friend.name}</strong><span>{t('Connected through a trip')}</span></li>)}</ul> : <p>{t('Your accepted trip invitations will add friends here.')}</p>}</section>
     <form className="panel page-panel flex flex-wrap items-end gap-3" onSubmit={e => { e.preventDefault(); const id = normalizeInviteCode(code); if (!/^[A-Z2-9]{16}$/.test(id)) { setError('Enter a valid invitation code.'); return; } router.push(`/join/${id}`); }}><label className="field-label">{t('Invitation code')}<input required value={code} onChange={e => setCode(e.target.value)} maxLength={40} autoCapitalize="characters"/></label><Button type="submit">{t('Review invitation')}</Button></form>
     {error && <p className="notice" role="alert">{t(error)}</p>}
     {!loaded && <p role="status">{t('Loading')}</p>}
