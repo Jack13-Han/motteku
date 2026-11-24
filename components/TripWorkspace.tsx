@@ -14,6 +14,10 @@ import TripPacking from './TripPacking';
 import WeatherAdvice from './WeatherAdvice';
 import { addAdviceItem } from '@/lib/addAdviceItem';
 import { Button } from './ui/button';
+import { useTravelChecks } from '@/lib/useTravelChecks';
+import { snapshotPackedAssignments } from '@/lib/travelChecks';
+import ForgottenItemCheck from './ForgottenItemCheck';
+import NextCheckCard from './NextCheckCard';
 
 const statusLabels = { draft: 'Draft', recruiting: 'Recruiting', confirmed: 'Confirmed', completed: 'Completed' };
 const roleLabels = { owner: 'Owner', admin: 'Admin', member: 'Member' };
@@ -33,6 +37,7 @@ export default function TripWorkspace({ tripId }: { tripId: string }) {
   const buildPlan = () => packing.data && members.length ? reconcilePacking(packing.data, members.map(member => ({ id: member.uid, uid: member.uid, name: member.name })), tripId, user?.uid || '', templates) : null;
   const next = review ? buildPlan() : null;
   const controller = { ...packing, data: packing.data ? { ...packing.data, adminUids: members.filter(member => member.role === 'admin').map(member => member.uid) } : null };
+  const itemChecks = useTravelChecks(loaded ? tripId : '', tripId, user?.uid || '', controller, { ...trip, startDate: trip?.startDate || '', endDate: trip?.endDate || '' });
   async function act(action: () => Promise<unknown>) {
     if (locked) return;
     setBusy(true); state.setError(''); setNotice('');
@@ -92,6 +97,8 @@ export default function TripWorkspace({ tripId }: { tripId: string }) {
       {(trip.status === 'confirmed' || trip.status === 'completed') && trip.packingReady && <>
         {manager && trip.status !== 'completed' && <section className="panel page-panel"><form className="add-row" onSubmit={e => { e.preventDefault(); if (!packing.data || !bagName.trim() || locked) return; const bags = [...packing.data.bags, { id: crypto.randomUUID(), name: bagName.trim() }]; void act(async () => { const saved = await packing.mutate(current => ({ ...current, bags }), (batch, parent) => batch.update(parent, { bags, bagIds: bags.map(bag => bag.id) })); if (!saved) throw new Error('Could not save changes.'); setBagName(''); }); }}><label className="field-label">{t('Bag name')}<input required maxLength={200} value={bagName} onChange={e => setBagName(e.target.value)} disabled={locked}/></label><Button type="submit" disabled={locked}>{t('Add bag')}</Button></form></section>}
         <TripPacking managed readOnly={trip.status === 'completed' || busy} tripId={tripId} tripType={templateTripTypes[trip.type]} packing={controller} userUid={user?.uid} members={confirmed} bags={packing.data?.bags || []} legacyItems={[]}/>
+        <NextCheckCard controller={itemChecks} packedCount={packing.data ? snapshotPackedAssignments(packing.data).length : 0} onOpen={() => document.getElementById('managed-item-check')?.scrollIntoView({ behavior: 'smooth' })}/>
+        <div id="managed-item-check"><ForgottenItemCheck controller={itemChecks} packing={controller.data} uid={user?.uid || ''} startDate={trip.startDate} endDate={trip.endDate}/></div>
       </>}
       {role === 'owner' && trip.status !== 'completed' && <div className="mt-5"><Button variant="outline" disabled={locked} onClick={() => void act(() => completeTrip(tripId))}>{t('Complete trip')}</Button></div>}
     </>}

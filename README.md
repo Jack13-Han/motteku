@@ -53,3 +53,14 @@ The server route calls Open-Meteo. The UI geocodes the city entered in the trip 
 
 ## Build check
 Run `npm run build` to check the production build. If npm reports package peer-dependency or network errors, confirm Node.js/npm versions and retry `npm install`.
+
+## Forgotten-item checks
+The dashboard has one **Item check / 忘れ物チェック** page for return-home and moving checks. Every trip gets a return-home schedule. Select multiple accommodations during creation, then register locations and checkout times on the check page to create moving checks; the final checkout is always the return-home check.
+
+Old trips default to `accommodationMode: 'single'` and `stays: []`. Shared schedule settings are stored at `packingTrips/{scope}/travelCheckPlans/current`; checkpoint records and their assignment snapshots are stored at `packingTrips/{scope}/travelCheckpoints/{checkpointId}`. Starting a check snapshots only current departure-packed assignments. Later packing edits do not remove snapshot items, and check actions never overwrite departure packing status. Local demo mode persists the same feature in browser storage.
+
+Owners/admins configure and start group checks; active members may update their own snapshot rows. Packing an item requires a current bag. Used-up and intentionally left-behind items are resolved; unchecked and missing items block completion. Reminders appear in the existing in-app notification panel while the app is open. Checkout inputs use the browser's local timezone; background push notifications are not implemented.
+
+Schedule previews do not create documents: missing travel-check data loads as an empty list and a safe default accommodation plan. Records are created only when a manager saves a plan or starts a check. Loading waits for the matching Firebase user and the parent packing document; recoverable failures show a Retry action. Development diagnostics include the Firebase code, message, path, current UID, trip ID and scope.
+
+Deploy the updated rules before using the feature with live Firestore: `firebase deploy --only firestore:rules --project motteku-7a721`. The root `firebase.json` selects `firestore.rules`. The implementation does not deploy rules or migrate/reset live data automatically. Run `node --test tests/travel-checks.test.cjs tests/travel-checks-controller.test.cjs tests/travel-checks-cloud.test.cjs` for model/controller tests; the existing local emulator runner also includes `tests/travel-check-rules.test.cjs`.

@@ -33,7 +33,7 @@ function creation(patch = {}, fetcher = async () => { throw new Error('No provid
   const context = {
     ...helpers, packingTemplates, requiredQuantity,
     tripCreationError: input => helpers.tripCreationError(input, '2030-01-01'),
-    draftLoading: false, newType: 'Ski weekend', newName: 'User trip', newLocation: 'Sapporo, Japan', newStart: '2030-01-02', newEnd: '2030-01-04', newTravelers: ['Han', 'Aki'], newBudget: '1000', language: 'ja',
+    draftLoading: false, newType: 'Ski weekend', newName: 'User trip', newLocation: 'Sapporo, Japan', newStart: '2030-01-02', newEnd: '2030-01-04', newTravelers: ['Han', 'Aki'], newBudget: '1000', newAccommodationMode: 'single', language: 'ja',
     tr: value => value, uid: () => `id-${++nextId}`,
     setDraftError: value => state.errors.push(value), setDraftLoading: value => state.loading.push(value), setDraftItems: value => { state.items = value; }, setTripDraft: value => { state.draft = value; },
     errorKey: (_error, fallback) => fallback,
@@ -114,6 +114,16 @@ test('confirmation saves user-edited preview into pending canonical packing with
   assert.equal(workspace.trips[0].pendingPacking[0].template.fixedQuantity, 2);
   assert.equal(workspace.activeTripId, 'new');
   assert.deepEqual(workspace.history, [{ id: 'history' }]);
+});
+
+test('trip creation stores the accommodation choice without requiring hotel details in the modal', async () => {
+  for (const mode of ['single', 'multiple', 'dayTrip']) {
+    const app = creation({ newType: 'Hiking', newAccommodationMode: mode });
+    await app.run();
+    assert.equal(app.state.draft.accommodationMode, mode);
+    assert.deepEqual(app.state.draft.stays, []);
+    assert.ok(app.state.items.length > 0);
+  }
 });
 
 test('workspace deletion selects a neighbor, preserves another active trip, and supports the last empty list', () => {

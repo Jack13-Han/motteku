@@ -9,10 +9,11 @@ import { useLanguage } from '@/lib/i18n';
 import { errorKey } from '@/lib/messages';
 import { createDraftTrip } from '@/lib/tripService';
 import { tripTypeLabels, type TripInput } from '@/lib/trips';
+import AccommodationModeSelect from './AccommodationModeSelect';
 
 export default function TripCreateForm() {
   const { t } = useLanguage(), { user } = useTripAccount(), router = useRouter();
-  const [input, setInput] = useState<TripInput>({ name: '', type: 'camping', destination: '', startDate: '', endDate: '', plannedMemberCount: 5, description: '' });
+  const [input, setInput] = useState<TripInput>({ name: '', type: 'camping', destination: '', startDate: '', endDate: '', plannedMemberCount: 5, description: '', accommodationMode: 'single' });
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   return <TripWorkflowFrame title="Create a draft trip"><section className="panel page-panel">
     <p>{t('Create a draft first. Invite your group, then confirm members before generating the checklist.')}</p>
@@ -24,6 +25,7 @@ export default function TripCreateForm() {
         <label>{t('Planned members')}<input type="number" min={1} max={100} step={1} required value={input.plannedMemberCount || ''} onChange={e => setInput({ ...input, plannedMemberCount: Number(e.target.value) })}/></label>
         <label>{t('Start date')}<input type="date" required value={input.startDate} onChange={e => setInput({ ...input, startDate: e.target.value })}/></label>
         <label>{t('End date')}<input type="date" required min={input.startDate} value={input.endDate} onChange={e => setInput({ ...input, endDate: e.target.value })}/></label>
+        <AccommodationModeSelect value={input.accommodationMode || 'single'} onChange={accommodationMode => setInput({ ...input, accommodationMode })}/>
         <label className="md:col-span-2">{t('Description')}<textarea maxLength={2000} rows={4} value={input.description} onChange={e => setInput({ ...input, description: e.target.value })}/></label>
         <Button type="submit">{t(busy ? 'Saving…' : 'Create draft')}</Button>
       </fieldset>

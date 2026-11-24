@@ -69,7 +69,8 @@ service cloud.firestore {
     }
     match /trips/{id} {
       function validTrip(data) {
-        return data.keys().hasOnly(['id', 'name', 'type', 'destination', 'startDate', 'endDate', 'description', 'plannedMemberCount', 'joinedMemberCount', 'ownerUid', 'ownerName', 'status', 'activeInviteId', 'confirmedMemberIds', 'packingReady', 'createdAt', 'updatedAt'])
+        return data.keys().hasOnly(['id', 'name', 'type', 'destination', 'startDate', 'endDate', 'description', 'plannedMemberCount', 'joinedMemberCount', 'ownerUid', 'ownerName', 'status', 'activeInviteId', 'confirmedMemberIds', 'packingReady', 'createdAt', 'updatedAt', 'accommodationMode'])
+          && (!('accommodationMode' in data) || data.accommodationMode in ['single', 'multiple', 'dayTrip'])
           && data.id == id && data.name is string && data.name.size() > 0 && data.name.size() <= 200
           && data.type in ['camping', 'domestic', 'overseas', 'hiking', 'beach', 'other']
           && data.destination is string && data.destination.size() > 0 && data.destination.size() <= 200
@@ -291,6 +292,80 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'quantity', 'targetMemberIds', 'updatedAt'])
           && request.resource.data.updatedAt == request.time;
         allow delete: if manager() && writablePacking();
+      }
+      // Forgotten-item checks never update departure items or assignments.
+      match /travelCheckPlans/{planId} {
+        function validPlan(data) {
+          return data.keys().hasOnly(['accommodationMode', 'stays', 'returnDate', 'returnTime', 'notificationMinutesBefore'])
+            && data.accommodationMode in ['single', 'multiple', 'dayTrip']
+            && data.stays is list && data.stays.size() <= 20
+            && (data.accommodationMode != 'multiple' || data.stays.size() >= 2)
+            && data.returnDate is string && data.returnTime is string
+            && data.notificationMinutesBefore is int && data.notificationMinutesBefore >= 0 && data.notificationMinutesBefore <= 10080;
+        }
+        allow read: if participant();
+        allow create, update: if planId == 'current' && manager() && validPlan(request.resource.data);
+        allow delete: if false;
+      }
+      match /travelCheckpoints/{checkId} {
+        function validCheck(data) {
+          return data.keys().hasOnly(['id', 'tripId', 'type', 'fromLocation', 'toLocation', 'scheduledAt', 'notificationMinutesBefore', 'status', 'completedAt', 'snapshotAt', 'archived', 'items', 'unresolvedCount', 'missingCount', 'lastUpdatedItemId'])
+            && data.id == checkId && data.tripId is string
+            && ((checkId == 'return-home' && data.type == 'returnHome') || (checkId.matches('move-[A-Za-z0-9_-]+') && data.type == 'transition'))
+            && data.fromLocation is string && data.fromLocation.size() <= 200 && data.toLocation is string && data.toLocation.size() <= 200
+            && data.scheduledAt is string && data.notificationMinutesBefore is int && data.notificationMinutesBefore >= 0 && data.notificationMinutesBefore <= 10080
+            && data.status in ['upcoming', 'inProgress', 'completed'] && data.completedAt is string && data.snapshotAt is string && data.archived is bool
+            && data.items is map && data.unresolvedCount is int && data.unresolvedCount >= 0 && data.unresolvedCount <= data.items.size()
+            && data.missingCount is int && data.missingCount >= 0 && data.missingCount <= data.unresolvedCount && data.lastUpdatedItemId is string
+            && (data.status != 'completed' || (data.unresolvedCount == 0 && data.missingCount == 0 && data.snapshotAt != '' && data.completedAt != ''));
+        }
+        function resolved(item) {
+          return item.status in ['usedUp', 'leaveBehind'] || (item.status == 'packed' && item.currentBagId != '' && item.currentBagName != '');
+        }
+        function validCheckItem(item) {
+          return item.keys().hasOnly(['id', 'sourceItemId', 'sourceAssignmentId', 'itemName', 'itemNameKey', 'itemType', 'assigneeId', 'assigneeName', 'quantity', 'originalBagId', 'originalBagName', 'currentBagId', 'currentBagName', 'status', 'updatedAt'])
+            && item.status in ['unchecked', 'packed', 'usedUp', 'leaveBehind', 'missing'] && item.updatedAt is string
+            && item.currentBagId is string && item.currentBagName is string
+            && (item.status != 'packed' || (item.currentBagId != '' && item.currentBagId in trip().bagIds && item.currentBagName != ''));
+        }
+        function ownCheckItem(item) {
+          let member = get(/databases/$(database)/documents/packingTrips/$(tripId)/members/$(item.assigneeId)).data;
+          return member.uid == request.auth.uid && member.get('active', true) == true;
+        }
+        function oneItemUpdate() {
+          let data = request.resource.data;
+          let key = data.lastUpdatedItemId;
+          let previous = resource.data.items[key];
+          let next = data.items[key];
+          return resource.data.status != 'completed' && resource.data.snapshotAt != '' && data.status == 'inProgress'
+            && data.diff(resource.data).affectedKeys().hasOnly(['items', 'status', 'unresolvedCount', 'missingCount', 'lastUpdatedItemId'])
+            && data.items.keys().toSet() == resource.data.items.keys().toSet()
+            && data.items.diff(resource.data.items).affectedKeys().hasOnly([key])
+            && next.diff(previous).affectedKeys().hasOnly(['status', 'currentBagId', 'currentBagName', 'updatedAt']) && validCheckItem(next)
+            && data.unresolvedCount == resource.data.unresolvedCount + (resolved(next) ? 0 : 1) - (resolved(previous) ? 0 : 1)
+            && data.missingCount == resource.data.missingCount + (next.status == 'missing' ? 1 : 0) - (previous.status == 'missing' ? 1 : 0)
+            && (manager() || ownCheckItem(previous));
+        }
+        function manageCheck() {
+          let data = request.resource.data;
+          let changed = data.diff(resource.data).affectedKeys();
+          return manager() && (
+            (resource.data.status == 'upcoming' && resource.data.snapshotAt == '' && data.status == 'upcoming'
+              && changed.hasOnly(['fromLocation', 'toLocation', 'scheduledAt', 'notificationMinutesBefore', 'archived']))
+            || (resource.data.status == 'upcoming' && resource.data.snapshotAt == '' && data.status == 'inProgress' && data.snapshotAt != ''
+              && data.items.size() > 0 && data.unresolvedCount == data.items.size() && data.missingCount == 0
+              && changed.hasOnly(['items', 'status', 'snapshotAt', 'unresolvedCount', 'missingCount', 'lastUpdatedItemId']))
+            || (resource.data.status == 'inProgress' && resource.data.unresolvedCount == 0 && resource.data.missingCount == 0 && data.status == 'completed'
+              && changed.hasOnly(['status', 'completedAt', 'lastUpdatedItemId'])));
+        }
+        allow read: if participant();
+        allow create: if manager() && validCheck(request.resource.data)
+          && ((request.resource.data.status == 'upcoming' && request.resource.data.items.size() == 0 && request.resource.data.snapshotAt == '')
+            || (request.resource.data.status == 'inProgress' && request.resource.data.snapshotAt != '' && request.resource.data.items.size() > 0
+              && request.resource.data.unresolvedCount == request.resource.data.items.size() && request.resource.data.missingCount == 0));
+        allow update: if participant() && validCheck(request.resource.data) && (manageCheck() || oneItemUpdate());
+        // Existing snapshots and the mandatory return checkpoint are retained.
+        allow delete: if false;
       }
       match /itemAssignments/{assignmentId} {
         function itemAfter() {

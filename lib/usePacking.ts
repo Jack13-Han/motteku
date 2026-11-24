@@ -12,6 +12,7 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [dataScope, setDataScope] = useState('');
+  const [dataUid, setDataUid] = useState('');
   const saving = useRef(false);
   const [roomMembers, setRoomMembers] = useState<{ uid: string; name: string }[]>([]);
   const cloud = firebaseConfigured;
@@ -20,7 +21,7 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
   useEffect(() => {
     let cancelled = false;
     const unsubscribers: (() => void)[] = [];
-    setData(null); setLoaded(false); setDataScope(''); setError(''); setRoomMembers([]);
+    setData(null); setLoaded(false); setDataScope(''); setDataUid(''); setError(''); setRoomMembers([]);
     if (!scope || !uid) return;
     const initial: PackingData = { ownerUid: uid, adminUids: [], bags, members: members.map(m => ({ ...m, uid: m.name === 'Me' ? uid : '' })), items: [], assignments: [] };
     if (!cloud) {
@@ -29,6 +30,7 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
         setData(saved ? restorePackingData(JSON.parse(saved)) : initial);
         setLoaded(true);
         setDataScope(scope);
+        setDataUid(uid);
       } catch { setError("Could not read local data."); }
       return;
     }
@@ -58,6 +60,7 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
           if (cancelled) return;
           setData({ ...values });
           setDataScope(scope);
+          setDataUid(uid);
           setLoaded(parentReady && membersReady && itemsReady && assignmentsReady);
         };
         unsubscribers.push(onSnapshot(parent, s => {
@@ -154,5 +157,5 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
     finally { saving.current = false; setBusy(false); }
   }
 
-  return { data, error, setError, busy, loaded: loaded && dataScope === scope, roomMembers, cloud, mutate, commitPlan, storage: 'collections' as 'collections' | 'workspace' };
+  return { data, error, setError, busy, loaded: loaded && dataScope === scope && dataUid === uid, roomMembers, cloud, mutate, commitPlan, storage: 'collections' as 'collections' | 'workspace' };
 }
