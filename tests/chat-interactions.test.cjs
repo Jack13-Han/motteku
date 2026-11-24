@@ -52,7 +52,7 @@ function harness(options = {}) {
     onSnapshot(ref, ...args) {
       const [next, error] = typeof args[0] === 'function' ? args : args.slice(1);
       const listener = { ref, next, error, active: true }; listeners.push(listener);
-      next(ref.path?.endsWith('/members') ? { docs: [{ id: 'alice', data: () => ({ name: 'Alice' }) }, { id: 'bob', data: () => ({ name: 'Bob' }) }] } : snapshotMessages());
+      next(ref.path?.endsWith('/members') ? { docs: [{ id: 'alice', data: () => ({ name: 'Alice' }) }, { id: 'bob', data: () => ({ name: 'Bob' }) }] } : /^sharedTrips\/[^/]+$/.test(ref.path || '') ? { exists: () => true, data: () => ({ ownerUid: 'alice' }) } : snapshotMessages());
       return () => { listener.active = false; };
     },
     setDoc(ref, payload) { const result = deferred(); writes.push({ ref, payload, result }); return result.promise; },
@@ -79,6 +79,7 @@ function harness(options = {}) {
     if (name === '@/lib/firebase') return { auth, db: {} };
     if (name === '@/lib/chat') return localModule(path.join(project, 'lib/chat.ts'));
     if (name === '@/lib/chatSendError') return localModule(path.join(project, 'lib/chatSendError.ts'));
+    if (name === './GroupPolls') return { default: 'GroupPolls' };
     if (name === 'lucide-react') return new Proxy({}, { get: (_target, key) => String(key) });
     if (name === '@/lib/i18n') return { useLanguage: () => ({ language: 'en', t: (text, params = {}) => text.replace(/\{(\w+)\}/g, (_, key) => String(params[key] ?? `{${key}}`)) }) };
     throw new Error('Unexpected import: ' + name);

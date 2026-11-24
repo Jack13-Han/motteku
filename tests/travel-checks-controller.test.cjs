@@ -145,6 +145,7 @@ test('existing notifications show due item checks during the trip, count only un
     if (name === 'react') return react;
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
     if (name === '@/lib/travelChecks') return helpers;
+    if (name === '@/lib/reminders') return app.load('lib/reminders.ts');
     if (name === '@/lib/useTravelCheckReminders') return { useTravelCheckReminders: () => [{ scope: 'local-owner_trip', check: checkpoint }] };
     if (name === '@/lib/i18n') return { useLanguage: () => ({ t: (key, params) => messages.translate(language, key, params), date: (value, time) => messages.formatDate(language, value, time) }) };
     return { Bell: 'svg', X: 'svg', CheckCheck: 'svg' };

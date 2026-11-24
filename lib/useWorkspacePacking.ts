@@ -24,7 +24,7 @@ export function useWorkspacePacking(trip: WorkspaceTrip | undefined, uid: string
     } catch (failure) { setError(errorKey(failure, 'Could not save changes.')); return false; }
     finally { saving.current = false; setBusy(false); }
   };
-  return { data, error, setError, busy, loaded, cloud: firebaseConfigured, roomMembers: [], mutate, storage: 'workspace',
+  return { data, error, setError, busy, loaded, synced: loaded && !firebaseConfigured, cloud: firebaseConfigured, roomMembers: [], mutate, storage: 'workspace',
     commitPlan: async next => data ? mutate(current => mergeWorkspaceChanges(data, next, current), () => {}) : false,
   };
 }

@@ -62,6 +62,39 @@ service cloud.firestore {
     function tripOwner(id) {
       return enrolled(id) && get(/databases/$(database)/documents/trips/$(id)).data.ownerUid == request.auth.uid;
     }
+    function pollText(value, maximum) {
+      // Match JavaScript trim(): reject leading/trailing ASCII and Unicode whitespace.
+      return value is string && value.size() > 0 && value.size() <= maximum
+        && value.matches('^[^\\s\\x{000B}\\p{Z}\\x{FEFF}]([\\s\\S]*[^\\s\\x{000B}\\p{Z}\\x{FEFF}])?$');
+    }
+    function validPollCreate() {
+      let data = request.resource.data;
+      return data.keys().hasAll(['question', 'options', 'createdBy', 'createdByName', 'createdAt', 'closed'])
+        && data.keys().hasOnly(['question', 'options', 'createdBy', 'createdByName', 'createdAt', 'closed'])
+        && pollText(data.question, 200) && pollText(data.createdByName, 80)
+        && data.createdBy == request.auth.uid && data.createdAt == request.time && data.closed == false
+        && data.options is list && data.options.size() >= 2 && data.options.size() <= 5
+        && data.options.toSet().size() == data.options.size()
+        && pollText(data.options[0], 100) && pollText(data.options[1], 100)
+        && (data.options.size() < 3 || pollText(data.options[2], 100))
+        && (data.options.size() < 4 || pollText(data.options[3], 100))
+        && (data.options.size() < 5 || pollText(data.options[4], 100));
+    }
+    function validPollVote() {
+      let before = resource.data.get('votes', {});
+      let after = request.resource.data.get('votes', {});
+      return resource.data.closed == false && before is map && after is map
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votes'])
+        && after.diff(before).affectedKeys().hasOnly([request.auth.uid])
+        && (!after.keys().hasAny([request.auth.uid]) || (after[request.auth.uid] is int
+          && after[request.auth.uid] >= 0 && after[request.auth.uid] < resource.data.options.size()));
+    }
+    function validPollClose(manager) {
+      return resource.data.closed == false && request.resource.data.closed == true
+        && request.resource.data.closedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['closed', 'closedAt'])
+        && (resource.data.createdBy == request.auth.uid || manager);
+    }
     function usableInvite(data, id) {
       let parent = get(/databases/$(database)/documents/trips/$(data.tripId)).data;
       return data.isActive && data.expiresAt > request.time && data.usedCount < data.get('maxUses', 99)
@@ -119,6 +152,16 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/trips/$(id)/tripMembers/$(request.auth.uid)).data.role == 'owner';
       allow update: if accountUser() && validTrip(request.resource.data) && (management() || joining());
       allow delete: if false;
+      match /polls/{pollId} {
+        allow read: if enrolled(id);
+        allow create: if enrolled(id)
+          && get(/databases/$(database)/documents/trips/$(id)).data.status != 'completed'
+          && validPollCreate();
+        allow update: if enrolled(id)
+          && get(/databases/$(database)/documents/trips/$(id)).data.status != 'completed'
+          && (validPollVote() || validPollClose(tripManager(id)));
+        allow delete: if false;
+      }
       match /tripMembers/{uid} {
         function validMember(data) {
           return data.keys().hasOnly(['id', 'uid', 'tripId', 'name', 'role', 'invitationId', 'joinedAt'])
@@ -235,6 +278,35 @@ service cloud.firestore {
         && (resource.data.get('managedTripId', '') == '' || request.resource.data.adminUids == resource.data.adminUids)
         && (request.resource.data.adminUids == resource.data.adminUids || resource.data.ownerUid == request.auth.uid);
       allow delete: if false;
+
+      match /departureRequirements/{itemId} {
+        allow read: if participant();
+        allow create: if manager() && writablePacking()
+          && request.resource.data.keys().hasAll(['itemId', 'createdBy', 'createdAt'])
+          && request.resource.data.keys().hasOnly(['itemId', 'createdBy', 'createdAt'])
+          && request.resource.data.itemId == itemId && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time
+          && exists(/databases/$(database)/documents/packingTrips/$(tripId)/items/$(itemId));
+        allow update: if false;
+        allow delete: if manager() && writablePacking();
+      }
+      match /departureConfirmations/{uid} {
+        function validConfirmation() {
+          let data = request.resource.data;
+          let memberPath = /databases/$(database)/documents/packingTrips/$(tripId)/members/$(data.memberId);
+          return data.keys().hasAll(['uid', 'memberId', 'contextHash', 'confirmedAt'])
+            && data.keys().hasOnly(['uid', 'memberId', 'contextHash', 'confirmedAt'])
+            && data.uid == uid && uid == request.auth.uid
+            && data.memberId is string && data.memberId.matches('^[^/]{1,200}$')
+            && exists(memberPath) && get(memberPath).data.uid == request.auth.uid
+            && get(memberPath).data.get('active', true) == true
+            && data.contextHash is string && data.contextHash.matches('^[a-f0-9]{64}$')
+            && data.confirmedAt == request.time;
+        }
+        allow read: if participant();
+        allow create, update: if participant() && writablePacking() && validConfirmation();
+        allow delete: if participant() && writablePacking() && request.auth.uid == uid;
+      }
 
       match /members/{memberId} {
         function managedMember() {
@@ -417,6 +489,14 @@ service cloud.firestore {
       allow update: if isTripMember(tripId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bagPlan']);
       allow delete: if false;
+
+      match /polls/{pollId} {
+        allow read: if isTripMember(tripId);
+        allow create: if isTripMember(tripId) && validPollCreate();
+        allow update: if isTripMember(tripId)
+          && (validPollVote() || validPollClose(get(/databases/$(database)/documents/sharedTrips/$(tripId)).data.ownerUid == request.auth.uid));
+        allow delete: if false;
+      }
 
       match /members/{memberId} {
         // A recipient can check their own membership before accepting an invite.
