@@ -9,6 +9,8 @@ import { weatherMessages } from './messages-weather';
 import { chatMessages } from './messages-chat';
 import { bagMessages } from './messages-bags';
 import { planningMessages } from './messages-planning';
+import { travelCheckMessages } from './messages-travel-checks';
+import { linMessages } from './messages-lin';
 export type Language = 'ja' | 'en';
 const baseJa: Record<string, string> = {
   'You': 'あなた',
@@ -86,7 +88,7 @@ const baseJa: Record<string, string> = {
   'Something went wrong. Please try again.': 'エラーが発生しました。もう一度お試しください。',
 };
 
-export const japaneseMessages = { ...mergeMessages, ...baseJa, ...extraJa, ...tripMessages, ...nanMessages, ...weatherMessages, ...chatMessages, ...bagMessages, ...planningMessages, ...dashboardMessages, ...itineraryMessages, ...dashboardShellMessages };
+export const japaneseMessages = { ...mergeMessages, ...baseJa, ...extraJa, ...tripMessages, ...nanMessages, ...weatherMessages, ...chatMessages, ...bagMessages, ...planningMessages, ...dashboardMessages, ...itineraryMessages, ...dashboardShellMessages, ...travelCheckMessages, ...linMessages };
 export type Params = Record<string, string | number>;
 export function errorKey(error: unknown, fallback: string) {
   return error instanceof Error && Object.hasOwn(japaneseMessages, error.message) ? error.message : fallback;

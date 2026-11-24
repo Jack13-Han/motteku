@@ -12,6 +12,7 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [dataScope, setDataScope] = useState('');
+  const [dataUid, setDataUid] = useState('');
   const [syncState, setSyncState] = useState({ scope: '', uid: '', synced: false });
   const saving = useRef(false);
   const [roomMembers, setRoomMembers] = useState<{ uid: string; name: string }[]>([]);
@@ -26,7 +27,7 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
     const identity = source.current;
     const active = () => !cancelled && source.current === identity;
     const unsubscribers: (() => void)[] = [];
-    setData(null); setLoaded(false); setDataScope(''); setSyncState({ scope: '', uid: '', synced: false }); setError(''); setRoomMembers([]);
+    setData(null); setLoaded(false); setDataScope(''); setDataUid(''); setSyncState({ scope: '', uid: '', synced: false }); setError(''); setRoomMembers([]);
     if (!scope || !uid) return;
     const initial: PackingData = { ownerUid: uid, adminUids: [], bags, members: members.map(m => ({ ...m, uid: m.name === 'Me' ? uid : '' })), items: [], assignments: [] };
     if (!cloud) {
@@ -35,6 +36,7 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
         setData(saved ? restorePackingData(JSON.parse(saved)) : initial);
         setLoaded(true);
         setDataScope(scope);
+        setDataUid(uid);
         setSyncState({ scope, uid, synced: true });
       } catch { setError("Could not read local data."); }
       return;
@@ -71,6 +73,7 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
           if (!active()) return;
           setData({ ...values });
           setDataScope(scope);
+          setDataUid(uid);
           setLoaded(parentReady && membersReady && itemsReady && assignmentsReady);
           setSyncState({ scope, uid, synced: !failed && parentReady && membersReady && itemsReady && assignmentsReady && Object.values(confirmed).every(Boolean) });
         };
@@ -96,7 +99,7 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
   }, [scope, uid, cloud]);
 
   async function mutate(local: (current: PackingData) => PackingData, remote: (batch: ReturnType<typeof writeBatch>, parent: ReturnType<typeof doc>) => void) {
-    if (!data || !loaded || dataScope !== scope || saving.current) return false;
+    if (!data || !loaded || dataScope !== scope || dataUid !== uid || saving.current) return false;
     saving.current = true;
     setBusy(true); setError('');
     try {
@@ -117,7 +120,7 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
 
   /** Reconcile metadata and insert missing rows; never write an existing row's checks, assignee or bag. */
   async function commitPlan(next: PackingData) {
-    if (!data || !loaded || dataScope !== scope || saving.current) return false;
+    if (!data || !loaded || dataScope !== scope || dataUid !== uid || saving.current) return false;
     saving.current = true; setBusy(true); setError('');
     try {
       if (!cloud) {
@@ -170,5 +173,5 @@ export function usePacking(scope: string, sourceTripId: string, roomId: string, 
     finally { saving.current = false; setBusy(false); }
   }
 
-  return { data, error, setError, busy, loaded: loaded && dataScope === scope, synced: loaded && dataScope === scope && syncState.scope === scope && syncState.uid === uid && syncState.synced, roomMembers, cloud, mutate, commitPlan };
+  return { data, error, setError, busy, loaded: loaded && dataScope === scope && dataUid === uid, synced: loaded && dataScope === scope && dataUid === uid && syncState.scope === scope && syncState.uid === uid && syncState.synced, roomMembers, cloud, mutate, commitPlan, storage: 'collections' as 'collections' | 'workspace' };
 }

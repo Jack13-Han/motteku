@@ -24,6 +24,8 @@ export interface TripItem {
   type: 'personal' | 'shared';
   quantity: number;
   targetMemberIds: string[];
+  /** Optional explicit targets for a generated personal item in a workspace trip. */
+  selectedMemberIds?: string[];
   createdBy: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -117,8 +119,8 @@ export function reconcilePacking(data: PackingData, requested: { id: string; nam
   const assignments = [...data.assignments];
   const existing = new Set(assignments.map(a => a.id));
   const reconciled = items.map(item => {
-    const targetMemberIds = item.type === 'personal' ? item.template ? ids : item.targetMemberIds.filter(id => ids.includes(id)) : [];
-    const quantity = item.template ? requiredQuantity(item.template, ids.length) : item.quantity;
+    const targetMemberIds = item.type === 'personal' ? item.template ? item.selectedMemberIds ? ids.filter(id => item.selectedMemberIds!.includes(id)) : ids : item.targetMemberIds.filter(id => ids.includes(id)) : [];
+    const quantity = item.template ? requiredQuantity(item.template, item.type === 'personal' ? targetMemberIds.length : ids.length) : item.quantity;
     const changed = quantity !== item.quantity || JSON.stringify(targetMemberIds) !== JSON.stringify(item.targetMemberIds);
     const next = changed ? { ...item, quantity, targetMemberIds, updatedAt: now } : item;
     // Manual items keep their chosen targets. Generated personal rows represent each member's whole allocation.
