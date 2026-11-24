@@ -420,6 +420,13 @@
   .dashboard-shell .sidebar-collapsed .logout-button{display:grid;place-items:center;width:48px;height:48px;min-height:48px;padding:0;gap:0}
 }
 
+/* Use vector icons in the packing dashboard so they render consistently across fonts. */
+.packing-suitcase svg{display:block;color:#5540c5;filter:drop-shadow(0 4px 3px #3c2c8240)}
+.packing-banner-cat svg{color:#6d58c9}
+.packing-tip-illustration svg{color:#5368bd;filter:drop-shadow(0 4px 4px #28345a33)}
+.packing-journey-banner>span{display:grid;place-items:center;color:#6754c4}
+.packing-summary-pills span{display:inline-flex;align-items:center;gap:4px}
+
 
 /* Hide the Firebase connection status above Log out */
 .dashboard-shell .sidebar-footer .sidebar-bottom {
