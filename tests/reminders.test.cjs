@@ -42,7 +42,7 @@ function harness(file, initialProps, options = {}) {
     useEffect(fn, deps) { const i = cursor++; const old = effects[i]; if (!old || !deps || deps.some((value, n) => value !== old.deps?.[n])) pending.push({ i, fn, deps }); },
   };
   const jsx = (type, props) => ({ type, props });
-  const component = load(file, { react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' }, 'lucide-react': new Proxy({}, { get: (_, key) => key }), '@/lib/i18n': { useLanguage: () => ({ t, date: value => value }) } }, { Date: TestDate, window: win, Notification: BrowserNotification, localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) }, document: { addEventListener() {}, removeEventListener() {} } }).default;
+  const component = load(file, { react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' }, 'lucide-react': new Proxy({}, { get: (_, key) => key }), '@/lib/useTravelCheckReminders': { useTravelCheckReminders: () => [] }, '@/lib/i18n': { useLanguage: () => ({ t, date: value => value }) } }, { Date: TestDate, window: win, Notification: BrowserNotification, localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) }, document: { addEventListener() {}, removeEventListener() {} } }).default;
   function render(next = props) {
     props = next; cursor = 0; pending = [];
     tree = component(props);

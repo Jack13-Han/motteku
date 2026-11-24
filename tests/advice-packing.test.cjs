@@ -46,8 +46,9 @@ function controller(options = {}) {
     };
   };
   const scope = 'trip-current';
-  const mutate = new Function('data', 'loaded', 'dataScope', 'scope', 'saving', 'setBusy', 'setError', 'cloud', 'db', 'writeBatch', 'doc', 'localKey', 'localStorage', 'setData', mutateSource + ';return mutate;')(
-    state.data, state.loaded, options.dataScope || scope, scope, saving,
+  const uid = options.uid || 'owner';
+  const mutate = new Function('data', 'loaded', 'dataScope', 'scope', 'dataUid', 'uid', 'saving', 'setBusy', 'setError', 'cloud', 'db', 'writeBatch', 'doc', 'localKey', 'localStorage', 'setData', mutateSource + ';return mutate;')(
+    state.data, state.loaded, options.dataScope || scope, scope, options.dataUid ?? uid, uid, saving,
     value => { state.busy = value; state.busyChanges.push(value); },
     value => { state.error = value; }, options.cloud ?? true, { path: '' }, writeBatch, ref,
     'motteku-packing-v2:' + scope,
@@ -86,7 +87,7 @@ test('personal suggestions write one canonical item and one assignment per activ
 });
 
 test('shared suggestions add one unit assigned to the current admin account', async () => {
-  const c = controller();
+  const c = controller({ uid: 'admin' });
   assert.equal(await addAdviceItem(c.packing, c.scope, 'admin', 'First aid kit', 'shared'), true);
   const [item, assignment] = c.state.commits[0];
   assert.equal(c.state.commits[0].length, 2);
@@ -142,6 +143,17 @@ test('scope changes and in-flight saves return false without canonical writes', 
     assert.equal(await addAdviceItem(c.packing, c.scope, 'owner', 'Rain jacket', 'personal'), false);
     assert.equal(c.state.commitAttempts, 0);
     assert.deepEqual(c.state.busyChanges, []);
+  }
+});
+
+test('packing loaded for another account cannot write cloud or local data after an account switch', async () => {
+  for (const cloud of [true, false]) {
+    const c = controller({ cloud, uid: 'owner', dataUid: 'previous-account' });
+    assert.equal(await addAdviceItem(c.packing, c.scope, 'owner', 'Rain jacket', 'personal'), false);
+    assert.equal(c.state.commitAttempts, 0);
+    assert.equal(c.state.localWrites.length, 0);
+    assert.deepEqual(c.state.busyChanges, []);
+    assert.equal(c.saving.current, false);
   }
 });
 

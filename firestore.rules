@@ -98,17 +98,25 @@ service cloud.firestore {
     function usableInvite(data, id) {
       let parent = get(/databases/$(database)/documents/trips/$(data.tripId)).data;
       return data.isActive && data.expiresAt > request.time && data.usedCount < data.get('maxUses', 99)
-        && parent.activeInviteId == id && parent.status in ['recruiting', 'confirmed'] && parent.joinedMemberCount < 100;
+        && parent.get('mode', 'group') == 'group' && parent.activeInviteId == id
+        && parent.status in ['recruiting', 'confirmed'] && parent.joinedMemberCount < 100;
     }
     match /trips/{id} {
       function validTrip(data) {
-        return data.keys().hasOnly(['id', 'name', 'type', 'destination', 'startDate', 'endDate', 'description', 'plannedMemberCount', 'joinedMemberCount', 'ownerUid', 'ownerName', 'status', 'activeInviteId', 'confirmedMemberIds', 'packingReady', 'createdAt', 'updatedAt'])
+        return data.keys().hasOnly(['id', 'name', 'type', 'mode', 'packingPhase', 'tripDetailsReady', 'destination', 'startDate', 'endDate', 'description', 'plannedMemberCount', 'joinedMemberCount', 'ownerUid', 'ownerName', 'status', 'activeInviteId', 'confirmedMemberIds', 'packingReady', 'createdAt', 'updatedAt', 'accommodationMode'])
+          && (!('accommodationMode' in data) || data.accommodationMode in ['single', 'multiple', 'dayTrip'])
           && data.id == id && data.name is string && data.name.size() > 0 && data.name.size() <= 200
           && data.type in ['camping', 'domestic', 'overseas', 'hiking', 'beach', 'other']
-          && data.destination is string && data.destination.size() > 0 && data.destination.size() <= 200
+          && (!('mode' in data) || data.mode in ['single', 'group'])
+          && (!('packingPhase' in data) || data.packingPhase in ['personal', 'shared'])
+          && (!('tripDetailsReady' in data) || data.tripDetailsReady is bool)
+          && data.destination is string && data.destination.size() <= 200
           && data.description is string && data.description.size() <= 2000
-          && data.startDate is string && data.startDate.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
-          && data.endDate is string && data.endDate >= data.startDate
+          && data.startDate is string && data.endDate is string
+          && (data.get('tripDetailsReady', true)
+            ? (data.destination.size() > 0 && data.startDate.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+              && data.endDate.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}') && data.endDate >= data.startDate)
+            : (data.get('mode', 'group') == 'group' && data.destination == '' && data.startDate == '' && data.endDate == '' && data.description == '' && data.status in ['draft', 'recruiting']))
           && data.plannedMemberCount is int && data.plannedMemberCount >= 1 && data.plannedMemberCount <= 100
           && data.joinedMemberCount is int && data.joinedMemberCount >= 1 && data.joinedMemberCount <= 100
           && data.ownerUid is string && data.ownerName is string && data.ownerName.size() > 0 && data.ownerName.size() <= 200
@@ -135,9 +143,15 @@ service cloud.firestore {
           (changed.hasOnly(['activeInviteId', 'status', 'updatedAt']) && resource.data.status != 'completed'
             && (data.status == resource.data.status || (resource.data.status == 'draft' && data.status == 'recruiting'))
             && (data.activeInviteId == '' || getAfter(/databases/$(database)/documents/tripInvitations/$(data.activeInviteId)).data.tripId == id))
-          || (changed.hasOnly(['status', 'confirmedMemberIds', 'packingReady', 'updatedAt']) && data.status == 'confirmed' && !data.packingReady
+          || (changed.hasOnly(['status', 'confirmedMemberIds', 'packingReady', 'packingPhase', 'updatedAt']) && data.status == 'confirmed' && !data.packingReady && data.get('tripDetailsReady', true)
             && resource.data.status != 'completed' && (resource.data.status == 'confirmed' || tripOwner(id))
             && data.confirmedMemberIds.size() == data.joinedMemberCount && data.ownerUid in data.confirmedMemberIds)
+          || (changed.hasOnly(['type', 'destination', 'startDate', 'endDate', 'description', 'tripDetailsReady', 'updatedAt'])
+            && resource.data.get('mode', 'group') == 'group' && resource.data.get('tripDetailsReady', true) == false
+            && data.tripDetailsReady == true && data.status in ['draft', 'recruiting'] && data.joinedMemberCount >= 2)
+          || (changed.hasOnly(['packingPhase', 'packingReady', 'updatedAt']) && resource.data.status == 'confirmed' && data.status == 'confirmed'
+            && resource.data.packingReady && !data.packingReady && resource.data.get('mode', 'group') == 'group'
+            && resource.data.get('packingPhase', 'personal') == 'personal' && data.packingPhase == 'shared')
           || (changed.hasOnly(['packingReady', 'updatedAt']) && data.status == 'confirmed' && data.packingReady)
           || (changed.hasOnly(['status', 'updatedAt']) && data.status == 'completed' && tripOwner(id)));
       }
@@ -145,6 +159,8 @@ service cloud.firestore {
       allow list: if false;
       allow create: if accountUser() && validTrip(request.resource.data)
         && request.resource.data.ownerUid == request.auth.uid && request.resource.data.status == 'draft'
+        && request.resource.data.mode in ['single', 'group']
+        && request.resource.data.tripDetailsReady == (request.resource.data.mode == 'single')
         && request.resource.data.joinedMemberCount == 1 && request.resource.data.activeInviteId == ''
         && request.resource.data.confirmedMemberIds.size() == 0 && !request.resource.data.packingReady
         && request.resource.data.createdAt == request.time
@@ -162,12 +178,19 @@ service cloud.firestore {
         allow delete: if false;
       }
       match /tripMembers/{uid} {
+        function invitationIssuerCanBeRead() {
+          let parent = get(/databases/$(database)/documents/trips/$(id)).data;
+          let invitePath = /databases/$(database)/documents/tripInvitations/$(parent.activeInviteId);
+          return accountUser() && parent.activeInviteId is string && parent.activeInviteId != ''
+            && exists(invitePath) && usableInvite(get(invitePath).data, parent.activeInviteId)
+            && resource.data.uid == get(invitePath).data.createdBy;
+        }
         function validMember(data) {
           return data.keys().hasOnly(['id', 'uid', 'tripId', 'name', 'role', 'invitationId', 'joinedAt'])
             && data.id == uid && data.uid == uid && data.tripId == id && data.name is string && data.name.size() > 0 && data.name.size() <= 200
             && data.role in ['owner', 'admin', 'member'] && data.invitationId is string && data.joinedAt is timestamp;
         }
-        allow get: if accountUser() && (request.auth.uid == uid || enrolled(id));
+        allow get: if accountUser() && (request.auth.uid == uid || enrolled(id) || invitationIssuerCanBeRead());
         allow list: if enrolled(id);
         allow create: if accountUser() && request.auth.uid == uid && validMember(request.resource.data) && request.resource.data.joinedAt == request.time
           && ((!exists(/databases/$(database)/documents/trips/$(id)) && request.resource.data.role == 'owner'
@@ -194,11 +217,13 @@ service cloud.firestore {
           && data.createdAt == request.time && data.expiresAt is timestamp && data.expiresAt > request.time
           && data.expiresAt <= request.time + duration.value(7, 'd') + duration.value(5, 'm')
           && (!('maxUses' in data) || (data.maxUses is int && data.maxUses >= 1 && data.maxUses <= 99))
-          && data.preview.keys().hasOnly(['name', 'destination', 'startDate', 'endDate', 'ownerName', 'plannedMemberCount', 'joinedMemberCount'])
+          && data.preview.keys().hasOnly(['name', 'destination', 'startDate', 'endDate', 'ownerName', 'plannedMemberCount', 'joinedMemberCount', 'tripDetailsReady'])
           && data.preview.name == parent.name && data.preview.destination == parent.destination
           && data.preview.startDate == parent.startDate && data.preview.endDate == parent.endDate
           && data.preview.ownerName == parent.ownerName && data.preview.plannedMemberCount == parent.plannedMemberCount
-          && data.preview.joinedMemberCount == parent.joinedMemberCount && parent.activeInviteId == inviteId && parent.status in ['recruiting', 'confirmed'];
+          && data.preview.joinedMemberCount == parent.joinedMemberCount
+          && data.preview.get('tripDetailsReady', true) == parent.get('tripDetailsReady', true) && parent.get('mode', 'group') == 'group'
+          && parent.activeInviteId == inviteId && parent.status in ['recruiting', 'confirmed'];
       }
       function usingInvite() {
         let data = request.resource.data;
@@ -211,11 +236,24 @@ service cloud.firestore {
           && getAfter(memberPath).data.invitationId == inviteId && getAfter(memberPath).data.role == 'member'
           && getAfter(/databases/$(database)/documents/trips/$(resource.data.tripId)).data.joinedMemberCount == data.preview.joinedMemberCount;
       }
+      function updatePreviewAfterTripDetails() {
+        let parent = getAfter(/databases/$(database)/documents/trips/$(resource.data.tripId)).data;
+        let preview = request.resource.data.preview;
+        return tripManager(resource.data.tripId) && resource.data.isActive
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['preview'])
+          && preview.keys().hasOnly(['name', 'destination', 'startDate', 'endDate', 'ownerName', 'plannedMemberCount', 'joinedMemberCount', 'tripDetailsReady'])
+          && preview.name == parent.name && preview.destination == parent.destination
+          && preview.startDate == parent.startDate && preview.endDate == parent.endDate
+          && preview.ownerName == parent.ownerName && preview.plannedMemberCount == parent.plannedMemberCount
+          && preview.joinedMemberCount == parent.joinedMemberCount
+          && preview.get('tripDetailsReady', true) == parent.get('tripDetailsReady', true);
+      }
       allow get: if accountUser() && (!exists(/databases/$(database)/documents/tripInvitations/$(inviteId)) || tripManager(resource.data.tripId) || usableInvite(resource.data, inviteId));
       allow list: if false;
       allow create: if accountUser() && tripManager(request.resource.data.tripId) && validInvite(request.resource.data);
       allow update: if accountUser() && ((tripManager(resource.data.tripId)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isActive']) && request.resource.data.isActive == false)
+        || updatePreviewAfterTripDetails()
         || usingInvite());
       allow delete: if false;
     }
@@ -226,6 +264,27 @@ service cloud.firestore {
         && request.resource.data.uid == uid && request.resource.data.joinedAt == request.time
         && existsAfter(/databases/$(database)/documents/trips/$(id)/tripMembers/$(uid));
       allow update, delete: if false;
+    }
+    match /users/{uid}/friends/{friendUid} {
+      function acceptedInvitePair() {
+        let memberPath = /databases/$(database)/documents/trips/$(request.resource.data.tripId)/tripMembers/$(request.auth.uid);
+        let member = getAfter(memberPath).data;
+        let invite = get(/databases/$(database)/documents/tripInvitations/$(member.invitationId)).data;
+        // joinedAt is server-set on member creation and immutable afterwards.
+        // This binds reciprocal writes to that same join without another pre-image lookup.
+        return accountUser() && existsAfter(memberPath) && member.uid == request.auth.uid
+          && member.joinedAt == request.time && member.role == 'member' && invite.tripId == request.resource.data.tripId
+          && ((uid == request.auth.uid && friendUid == invite.createdBy)
+            || (uid == invite.createdBy && friendUid == request.auth.uid
+              && request.resource.data.name == member.name));
+      }
+      allow read: if accountUser() && request.auth.uid == uid;
+      allow create, update: if acceptedInvitePair()
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'tripId', 'createdAt'])
+        && request.resource.data.uid == friendUid && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 200
+        && request.resource.data.tripId is string && request.resource.data.createdAt == request.time;
+      allow delete: if false;
     }
     // The packing model is independent of the legacy workspace array.
     match /packingTrips/{tripId} {
@@ -341,6 +400,7 @@ service cloud.firestore {
               || (data.type == 'shared' && t.quantityRule == 'capacity' && t.capacityPerItem is int && t.capacityPerItem > 0 && t.capacityPerItem <= 100)));
         }
         function validItem(data) {
+          let sourceTrip = get(/databases/$(database)/documents/trips/$(tripId)).data;
           return data.keys().hasOnly(['id', 'tripId', 'name', 'type', 'quantity', 'targetMemberIds', 'createdBy', 'createdAt', 'updatedAt', 'template', 'customName'])
             && (!('customName' in data) || data.customName is bool)
             && data.id == itemId && data.tripId == tripId
@@ -349,20 +409,100 @@ service cloud.firestore {
             && data.quantity is int && data.quantity >= 1 && data.quantity <= 10000
             && data.targetMemberIds is list && data.targetMemberIds.size() <= 100
             && data.targetMemberIds.toSet().size() == data.targetMemberIds.size()
-            && (trip().get('managedTripId', '') == '' || (get(/databases/$(database)/documents/trips/$(tripId)).data.status == 'confirmed'
-              && data.targetMemberIds.toSet().difference(get(/databases/$(database)/documents/trips/$(tripId)).data.confirmedMemberIds.toSet()).size() == 0))
+            && (trip().get('managedTripId', '') == '' || (sourceTrip.status == 'confirmed'
+              && data.targetMemberIds.toSet().difference(sourceTrip.confirmedMemberIds.toSet()).size() == 0
+              && (data.type == 'personal' || (sourceTrip.get('mode', 'group') == 'group'
+                && sourceTrip.get('packingPhase', sourceTrip.get('packingReady', false) ? 'shared' : 'personal') == 'shared'))
+              && (sourceTrip.get('mode', 'group') != 'single' || data.type == 'personal')))
             && ((data.type == 'personal' && ((!('template' in data) && data.quantity == 1)
                 || ('template' in data && data.quantity == data.targetMemberIds.size() * data.template.quantityPerPerson)))
               || (data.type == 'shared' && data.quantity <= 10000 && data.targetMemberIds.size() == 0));
         }
         allow read: if participant();
-        allow create: if manager() && validItem(request.resource.data)
+        allow create: if (manager() || (participant() && request.resource.data.type == 'personal'
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.targetMemberIds == [request.auth.uid]))
+          && validItem(request.resource.data)
           && request.resource.data.createdBy == request.auth.uid
           && request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time;
         allow update: if manager() && validItem(request.resource.data)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'quantity', 'targetMemberIds', 'updatedAt'])
           && request.resource.data.updatedAt == request.time;
         allow delete: if manager() && writablePacking();
+      }
+      // Forgotten-item checks never update departure items or assignments.
+      match /travelCheckPlans/{planId} {
+        function validPlan(data) {
+          return data.keys().hasOnly(['accommodationMode', 'stays', 'returnDate', 'returnTime', 'notificationMinutesBefore'])
+            && data.accommodationMode in ['single', 'multiple', 'dayTrip']
+            && data.stays is list && data.stays.size() <= 20
+            && (data.accommodationMode != 'multiple' || data.stays.size() >= 2)
+            && data.returnDate is string && data.returnTime is string
+            && data.notificationMinutesBefore is int && data.notificationMinutesBefore >= 0 && data.notificationMinutesBefore <= 10080;
+        }
+        allow read: if participant();
+        allow create, update: if planId == 'current' && manager() && validPlan(request.resource.data);
+        allow delete: if false;
+      }
+      match /travelCheckpoints/{checkId} {
+        function validCheck(data) {
+          return data.keys().hasOnly(['id', 'tripId', 'type', 'fromLocation', 'toLocation', 'scheduledAt', 'notificationMinutesBefore', 'status', 'completedAt', 'snapshotAt', 'archived', 'items', 'unresolvedCount', 'missingCount', 'lastUpdatedItemId'])
+            && data.id == checkId && data.tripId is string
+            && ((checkId == 'return-home' && data.type == 'returnHome') || (checkId.matches('move-[A-Za-z0-9_-]+') && data.type == 'transition'))
+            && data.fromLocation is string && data.fromLocation.size() <= 200 && data.toLocation is string && data.toLocation.size() <= 200
+            && data.scheduledAt is string && data.notificationMinutesBefore is int && data.notificationMinutesBefore >= 0 && data.notificationMinutesBefore <= 10080
+            && data.status in ['upcoming', 'inProgress', 'completed'] && data.completedAt is string && data.snapshotAt is string && data.archived is bool
+            && data.items is map && data.unresolvedCount is int && data.unresolvedCount >= 0 && data.unresolvedCount <= data.items.size()
+            && data.missingCount is int && data.missingCount >= 0 && data.missingCount <= data.unresolvedCount && data.lastUpdatedItemId is string
+            && (data.status != 'completed' || (data.unresolvedCount == 0 && data.missingCount == 0 && data.snapshotAt != '' && data.completedAt != ''));
+        }
+        function resolved(item) {
+          return item.status in ['usedUp', 'leaveBehind'] || (item.status == 'packed' && item.currentBagId != '' && item.currentBagName != '');
+        }
+        function validCheckItem(item) {
+          return item.keys().hasOnly(['id', 'sourceItemId', 'sourceAssignmentId', 'itemName', 'itemNameKey', 'itemType', 'assigneeId', 'assigneeName', 'quantity', 'originalBagId', 'originalBagName', 'currentBagId', 'currentBagName', 'status', 'updatedAt'])
+            && item.status in ['unchecked', 'packed', 'usedUp', 'leaveBehind', 'missing'] && item.updatedAt is string
+            && item.currentBagId is string && item.currentBagName is string
+            && (item.status != 'packed' || (item.currentBagId != '' && item.currentBagId in trip().bagIds && item.currentBagName != ''));
+        }
+        function ownCheckItem(item) {
+          let member = get(/databases/$(database)/documents/packingTrips/$(tripId)/members/$(item.assigneeId)).data;
+          return member.uid == request.auth.uid && member.get('active', true) == true;
+        }
+        function oneItemUpdate() {
+          let data = request.resource.data;
+          let key = data.lastUpdatedItemId;
+          let previous = resource.data.items[key];
+          let next = data.items[key];
+          return resource.data.status != 'completed' && resource.data.snapshotAt != '' && data.status == 'inProgress'
+            && data.diff(resource.data).affectedKeys().hasOnly(['items', 'status', 'unresolvedCount', 'missingCount', 'lastUpdatedItemId'])
+            && data.items.keys().toSet() == resource.data.items.keys().toSet()
+            && data.items.diff(resource.data.items).affectedKeys().hasOnly([key])
+            && next.diff(previous).affectedKeys().hasOnly(['status', 'currentBagId', 'currentBagName', 'updatedAt']) && validCheckItem(next)
+            && data.unresolvedCount == resource.data.unresolvedCount + (resolved(next) ? 0 : 1) - (resolved(previous) ? 0 : 1)
+            && data.missingCount == resource.data.missingCount + (next.status == 'missing' ? 1 : 0) - (previous.status == 'missing' ? 1 : 0)
+            && (manager() || ownCheckItem(previous));
+        }
+        function manageCheck() {
+          let data = request.resource.data;
+          let changed = data.diff(resource.data).affectedKeys();
+          return manager() && (
+            (resource.data.status == 'upcoming' && resource.data.snapshotAt == '' && data.status == 'upcoming'
+              && changed.hasOnly(['fromLocation', 'toLocation', 'scheduledAt', 'notificationMinutesBefore', 'archived']))
+            || (resource.data.status == 'upcoming' && resource.data.snapshotAt == '' && data.status == 'inProgress' && data.snapshotAt != ''
+              && data.items.size() > 0 && data.unresolvedCount == data.items.size() && data.missingCount == 0
+              && changed.hasOnly(['items', 'status', 'snapshotAt', 'unresolvedCount', 'missingCount', 'lastUpdatedItemId']))
+            || (resource.data.status == 'inProgress' && resource.data.unresolvedCount == 0 && resource.data.missingCount == 0 && data.status == 'completed'
+              && changed.hasOnly(['status', 'completedAt', 'lastUpdatedItemId'])));
+        }
+        allow read: if participant();
+        allow create: if manager() && validCheck(request.resource.data)
+          && ((request.resource.data.status == 'upcoming' && request.resource.data.items.size() == 0 && request.resource.data.snapshotAt == '')
+            || (request.resource.data.status == 'inProgress' && request.resource.data.snapshotAt != '' && request.resource.data.items.size() > 0
+              && request.resource.data.unresolvedCount == request.resource.data.items.size() && request.resource.data.missingCount == 0));
+        allow update: if participant() && validCheck(request.resource.data) && (manageCheck() || oneItemUpdate());
+        // Existing snapshots and the mandatory return checkpoint are retained.
+        allow delete: if false;
       }
       match /itemAssignments/{assignmentId} {
         function itemAfter() {
@@ -392,8 +532,13 @@ service cloud.firestore {
           return request.resource.data.memberId == '' ||
             getAfter(/databases/$(database)/documents/packingTrips/$(tripId)/members/$(request.resource.data.memberId)).data.get('active', true) == true;
         }
+        function ownPersonalAssignment() {
+          let item = itemAfter();
+          return participant() && item.type == 'personal' && request.resource.data.memberId == request.auth.uid
+            && request.auth.uid in item.targetMemberIds;
+        }
         allow read: if participant();
-        allow create: if manager() && validAssignment() && activeAssignee();
+        allow create: if (manager() || ownPersonalAssignment()) && validAssignment() && activeAssignee();
         allow update: if participant() && validAssignment()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'bagId', 'memberId', 'updatedAt'])
           && (request.resource.data.memberId == resource.data.memberId || activeAssignee())

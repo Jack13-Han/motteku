@@ -36,12 +36,12 @@ export default function TripJoin({ inviteId }: { inviteId: string }) {
     {!loaded && <p role="status">{t('Loading')}</p>}
     {error && <p className="notice" role="alert">{t(error)}</p>}
     {invite && <section className="panel page-panel"><h2>{invite.preview.name}</h2><dl className="managed-details">
-      <dt>{t('Destination')}</dt><dd>{invite.preview.destination}</dd>
+      <dt>{t('Destination')}</dt><dd>{invite.preview.tripDetailsReady === false ? t('Choose after joining') : invite.preview.destination}</dd>
       <dt>{t('Trip dates')}</dt><dd>{date(invite.preview.startDate)} → {date(invite.preview.endDate)}</dd>
       <dt>{t('Owner')}</dt><dd>{invite.preview.ownerName}</dd>
       <dt>{t('Planned members')}</dt><dd>{invite.preview.plannedMemberCount}</dd>
       <dt>{t('Joined members')}</dt><dd>{invite.preview.joinedMemberCount}</dd>
-    </dl><div className="mt-5 flex flex-wrap gap-3">
+    </dl>{invite.preview.tripDetailsReady === false && <p>{t('The group is forming. The destination and dates will be chosen after you join.')}</p>}<div className="mt-5 flex flex-wrap gap-3">
       {alreadyJoined ? <Button asChild><Link href={`/trips/${invite.tripId}`}>{t('Open trip')}</Link></Button> : <Button disabled={busy || !!error} onClick={async () => { if (busy) return; setBusy(true); setError(''); try { router.push(`/trips/${await joinTrip(inviteId, user)}`); } catch (e) { setError(errorKey(e, 'Could not join this trip. Refresh the invitation and try again.')); setBusy(false); } }}>{t(busy ? 'Please wait…' : 'Join trip')}</Button>}
       <Button asChild variant="outline"><Link href="/trips">{t('Cancel')}</Link></Button>
     </div>{alreadyJoined && <p>{t('You have already joined this trip.')}</p>}</section>}
