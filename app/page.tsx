@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { onAuthStateChanged, signInAnonymously, signOut, type User } from 'firebase/auth';
+import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { auth, db, firebaseConfigured } from '@/lib/firebase';
 import { CalendarDays, Check, CheckCheck, CloudSun, Copy, Download, History, ListChecks, LoaderCircle, MessageCircle, Plus, ShoppingCart, Sparkles, Users, Wallet, Weight, X, TentTree, Trash2, Save, Cloud, ClipboardCheck, LogOut, PanelLeftClose, PanelLeftOpen, Search, Heart, Route, Home as HomeIcon } from 'lucide-react';
@@ -57,9 +57,9 @@ export default function Home(){
  const router=useRouter();
  const [sidebarCollapsed,setSidebarCollapsed]=useState(false);
  const [tripSearch,setTripSearch]=useState('');
+ const [workspaceUid,setWorkspaceUid]=useState('');
  const [searchOpen,setSearchOpen]=useState(false);
  const [loggingOut,setLoggingOut]=useState(false);
- const skipAnonymousSignIn=useRef(false);
 
  const yen=(n:number)=>new Intl.NumberFormat(language==='ja'?'ja-JP':'en-US',{style:'currency',currency:'JPY',maximumFractionDigits:0}).format(n||0);
  const [workspace,setWorkspace]=useState<Workspace>(seed); const [ready,setReady]=useState(false); const [user,setUser]=useState<User|null>(null); const [remoteLoaded,setRemoteLoaded]=useState(false); const [remoteError,setRemoteError]=useState(false); const [tab,setTab]=useState('Overview'); const [newName,setNewName]=useState(''); const [newType,setNewType]=useState('Camping'); const [newLocation,setNewLocation]=useState('Osaka, Japan'); const [newStart,setNewStart]=useState(new Date(Date.now()+7*86400000).toISOString().slice(0,10)); const [newEnd,setNewEnd]=useState(new Date(Date.now()+9*86400000).toISOString().slice(0,10)); const [newBudget,setNewBudget]=useState('15000'); const [itemName,setItemName]=useState(''); const [memberName,setMemberName]=useState(''); const [expenseName,setExpenseName]=useState(''); const [expenseAmount,setExpenseAmount]=useState(''); const [expensePayer,setExpensePayer]=useState(''); const [notice,setNotice]=useState('');
@@ -81,24 +81,52 @@ export default function Home(){
  const minTripDate=localTripDate();
  const minEndDate=newStart>minTripDate?newStart:minTripDate;
  const packingUid=user?.uid || (firebaseConfigured ? '' : 'local-owner');
- const packingScope=ready && active && packingUid ? active.sharedChatId || packingUid + '_' + active.id : '';
+ const workspaceReady=ready && !!user && !user.isAnonymous && workspaceUid===user.uid;
+ const packingScope=workspaceReady && active && packingUid ? active.sharedChatId || packingUid + '_' + active.id : '';
  const packing=usePacking(packingScope,active?.id || '',active?.sharedChatId || '',packingUid,active?.members || [],active?.bags || []);
  const itemChecks=useTravelChecks(packingScope,active?.id || '',packingUid,packing,{...active,startDate:active?.startDate || '',endDate:active?.endDate || ''});
  const travelMembers=packing.loaded && packing.data ? packing.data.members.filter(m=>m.active!==false) : active?.members || [];
  const memberAdmin=!!packing.data && (packing.data.ownerUid===packingUid || packing.data.adminUids.includes(packingUid));
  const updateTrip=(fn:(trip:Trip)=>Trip)=>setWorkspace(w=>({...w,trips:w.trips.map(t=>t.id===w.activeTripId?fn(t):t)}));
  useEffect(()=>{
-   if(!firebaseConfigured || !auth || !db){try{const saved=localStorage.getItem('motteku-workspace');if(saved){const parsed=normalizeWorkspace(JSON.parse(saved));if(Array.isArray(parsed.trips))setWorkspace(parsed);}}catch{}setReady(true);return;}
-   const unsubscribe=onAuthStateChanged(auth, u=>{setUser(u);if(!u && !skipAnonymousSignIn.current)signInAnonymously(auth!).catch(e=>{console.error(e);setNotice('Firebase sign-in failed. Check that Anonymous Authentication is enabled.');setReady(true);});});
+   if(!firebaseConfigured || !auth || !db){router.replace('/login');return;}
+   const unsubscribe=onAuthStateChanged(auth, currentUser=>{
+     if(!currentUser || currentUser.isAnonymous){
+       setUser(null);
+       router.replace(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+       return;
+     }
+     setUser(currentUser);
+   });
    return ()=>unsubscribe();
- },[]);
+ },[router]);
  useEffect(()=>{
-   if(!firebaseConfigured || !db || !user)return;
-   const ref=doc(db,'users',user.uid,'workspace','main');
-   const unsubscribe=onSnapshot(ref,snap=>{if(snap.exists()){const data=normalizeWorkspace(snap.data());if(Array.isArray(data.trips))setWorkspace(data);}setRemoteLoaded(true);setReady(true);},()=>{try{const saved=localStorage.getItem('motteku-workspace');if(saved){const parsed=normalizeWorkspace(JSON.parse(saved));if(Array.isArray(parsed.trips))setWorkspace(parsed);}}catch{}setRemoteError(true);setNotice('Firebase access was denied. Using local demo mode; publish firestore.rules in the matching Firebase project to restore cloud sync.');setRemoteLoaded(true);setReady(true);});
-   return ()=>unsubscribe();
- },[user]);
- useEffect(()=>{if(!ready)return;if(firebaseConfigured&&db&&user&&!remoteError){if(!remoteLoaded)return;const ref=doc(db,'users',user.uid,'workspace','main');setDoc(ref,workspace,{merge:true}).catch(()=>{setRemoteError(true);setNotice('Firebase access was denied. Using local demo mode; publish firestore.rules in the matching Firebase project to restore cloud sync.');});}else{try{localStorage.setItem('motteku-workspace',JSON.stringify(workspace));}catch{}}},[workspace,ready,user,remoteLoaded,remoteError]);
+   setRemoteLoaded(false);setRemoteError(false);setReady(false);setWorkspaceUid('');
+   if(!firebaseConfigured || !db || !user || user.isAnonymous)return;
+   const accountUid=user.uid;
+   let cancelled=false;
+   const current=()=>!cancelled && auth?.currentUser?.uid===accountUid;
+   const ref=doc(db,'users',accountUid,'workspace','main');
+   const unsubscribe=onSnapshot(ref,snap=>{
+     if(!current())return;
+     const data=snap.exists()?normalizeWorkspace(snap.data()):seed;
+     setWorkspace(data);setWorkspaceUid(accountUid);setRemoteLoaded(true);setReady(true);
+   },()=>{
+     if(!current())return;
+     let savedWorkspace=seed;
+     try{const saved=localStorage.getItem(`motteku-workspace:${accountUid}`);if(saved){const parsed=normalizeWorkspace(JSON.parse(saved));if(Array.isArray(parsed.trips))savedWorkspace=parsed;}}catch{}
+     setWorkspace(savedWorkspace);setWorkspaceUid(accountUid);setRemoteError(true);setNotice('Firebase access was denied. Using local demo mode; publish firestore.rules in the matching Firebase project to restore cloud sync.');setRemoteLoaded(true);setReady(true);
+   });
+   return ()=>{cancelled=true;unsubscribe();};
+ },[user?.uid]);
+ useEffect(()=>{
+   if(!workspaceReady||!firebaseConfigured||!db||!user||auth?.currentUser?.uid!==user.uid||!remoteLoaded)return;
+   const accountUid=user.uid;
+   try{localStorage.setItem(`motteku-workspace:${accountUid}`,JSON.stringify(workspace));}catch{}
+   if(remoteError)return;
+   const ref=doc(db,'users',accountUid,'workspace','main');
+   setDoc(ref,workspace,{merge:true}).catch(()=>{if(auth?.currentUser?.uid!==accountUid)return;setRemoteError(true);setNotice('Firebase access was denied. Using local demo mode; publish firestore.rules in the matching Firebase project to restore cloud sync.');});
+ },[workspace,workspaceReady,user?.uid,remoteLoaded,remoteError]);
  const expenses=active?.expenses||[];
  const currentPackingRows=packing.loaded && packing.data ? packing.data.assignments.filter(a=>packing.data!.items.some(item=>isCurrentAssignment(item,a))) : [];
  const templateSelections:TemplateSelection[]=packing.loaded && packing.data ? packing.data.items.filter(i=>i.template).map(i=>({template:i.template!,...(i.customName?{customName:i.name}:{})})) : active?.pendingPacking || [];
@@ -229,12 +257,10 @@ export default function Home(){
   const handleLogout = async () => {
     if (loggingOut) return;
     setLoggingOut(true);
-    skipAnonymousSignIn.current = true;
     try {
       if (auth) await signOut(auth);
       router.replace("/login");
     } catch {
-      skipAnonymousSignIn.current = false;
       setLoggingOut(false);
       setNotice("Could not log out. Please try again.");
     }
@@ -278,7 +304,7 @@ export default function Home(){
    {tripDraft&&<PackingPreview items={draftItems} setItems={setDraftItems} onConfirm={confirmTrip} onCancel={()=>{setTripDraft(null);setDraftItems([]);setDraftError('');}}/>}
  </section>;
  const nav=[['Overview',HomeIcon],['Itinerary',Route],['Packing list',ListChecks],['Bags & photos',ClipboardCheck],['Item check',ClipboardCheck],['Group chat',MessageCircle],['Reminders',CalendarDays],['Members',Users],['Budget',Wallet],['Weather & AI',CloudSun],['History',History]] as const;
- if(!ready)return <main className="loading"><LoaderCircle className="spin" size={28}/> {tr('Loading Motteku…')}</main>;
+ if(!workspaceReady)return <main className="loading"><LoaderCircle className="spin" size={28}/> {tr('Loading Motteku…')}</main>;
   return <main className="app-shell dashboard-shell">
       <aside
         className={sidebarCollapsed ? "sidebar sidebar-collapsed" : "sidebar"}

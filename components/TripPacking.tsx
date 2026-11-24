@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { Gift, Plus, Search, Sparkles, Users } from 'lucide-react';
+import { Backpack, Cat, CheckCircle2, Circle, Gift, Grid2X2, Heart, Luggage, Plane, Plus, Search, Shirt, Sparkles, UserRound, Users, UsersRound } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n';
 import { errorKey } from '@/lib/messages';
 import { collection, doc, getDocs, serverTimestamp, Timestamp } from 'firebase/firestore';
@@ -10,8 +10,8 @@ import type { usePacking } from '@/lib/usePacking';
 import { packingTemplates } from '@/lib/packingTemplates';
 import PackingCards from './PackingCards';
 import MemberRemovalDialog from './MemberRemovalDialog';
-import DepartureReadiness from './DepartureReadiness';
 import { canEditAssignment, createPackingItem, isCurrentAssignment, reconcilePacking, STATUS_LABELS, type ItemAssignment, type ItemStatus, type PackingBag, type Registration, type TripItem } from '@/lib/packing';
+import DepartureReadiness from './DepartureReadiness';
 
 type Props = {
   managed?: boolean;
@@ -140,18 +140,18 @@ export default function TripPacking({ tripId, tripType, packing, managed = false
   return <section className="packing-dashboard">
     {managed && managedStage && <div className="packing-stage-note"><div><strong>{t(managedStage === 'personal' ? 'Step 1 · Personal packing' : 'Step 2 · Group packing')}</strong><p>{t(managedStage === 'personal' ? isSingleTrip ? 'This is your personal trip checklist.' : 'Choose and prepare your own items first. Your updates sync for the trip members.' : 'Personal packing is saved. Add and prepare the items everyone will share.')}</p></div>{managedStage === 'personal' && onOpenShared && <button className="primary" type="button" disabled={disabled || !canOpenShared} onClick={onOpenShared}>{t('Open shared items')}</button>}{managedStage === 'personal' && !onOpenShared && !isSingleTrip && <small>{t('The trip owner opens shared items after everyone is ready.')}</small>}</div>}
     <div className="packing-banner">
-      <div className="packing-banner-copy"><span className="packing-suitcase" aria-hidden="true">🧳</span><div><h2>{t('Packing List')}</h2><p>{t("Don't forget anything for your amazing trip!")}</p></div></div>
+      <div className="packing-banner-copy"><span className="packing-suitcase" aria-hidden="true"><Luggage size={48} strokeWidth={1.7}/></span><div><h2>{t('Packing List')}</h2><p>{t("Don't forget anything for your amazing trip!")}</p></div></div>
       <div className="packing-banner-mountains" aria-hidden="true"><span className="packing-mountain far-left"/><span className="packing-mountain far-right"/><span className="packing-mountain middle"/><span className="packing-mountain fuji"/></div>
-      <div className="packing-banner-doodle" aria-hidden="true"><span>♡</span><span>✈</span><span className="packing-banner-cat">🐱🎒</span></div>
+      <div className="packing-banner-doodle" aria-hidden="true"><Heart size={24}/><Plane size={28}/><span className="packing-banner-cat"><Cat size={62} strokeWidth={1.7}/></span></div>
     </div>
     {error && <p className="notice" role="alert">{t(error)}</p>}
     {!loaded && !error && <p role="status">{t("Loading packing items…")}</p>}
     {busy && <p role="status">{t("Saving…")}</p>}
     {data && loaded && <>
       <div className="packing-summary-grid">
-        <section className="panel packing-summary-progress"><div className="packing-ring" style={{'--packing-progress': `${percentPacked}%`} as React.CSSProperties}><div><strong>{percentPacked}%</strong><span>{t('Packed')}</span></div></div><div className="packing-summary-copy"><h3>{t('Packing Progress')}</h3><strong>{packedUnits} / {totalUnits} {t('items')}</strong><div className="packing-summary-bar"><span style={{width: `${percentPacked}%`}}/></div><div className="packing-summary-pills"><span className="ready">✓ {readyUnits} {t('Ready')}</span><span className="prepare">♙ {Math.max(0, totalUnits-readyUnits)} {t('To Prepare')}</span><span className="pending">◉ {Math.max(0, readyUnits-packedUnits)} {t('Pending')}</span></div></div></section>
-        <section className="panel packing-quick-filters"><h3>{t('Quick Filters')}</h3><div className="packing-filter-buttons">{(managedStage === 'personal' ? ['personal'] as const : ['all','personal','shared'] as const).map(type=><button key={type} className={(managedStage==='personal'||filterType===type)?'selected':''} onClick={()=>setFilterType(type)}>{type==='all'?'▦':type==='personal'?'♙':'♧'} {t(type==='all'?'All Items':type==='personal'?'Personal':'Shared')}</button>)}</div><label className="packing-only-toggle"><input type="checkbox" checked={onlyNotReady} onChange={e=>setOnlyNotReady(e.target.checked)}/><span>{t('Unpacked Only')}</span></label></section>
-        <aside className="panel packing-tip-card"><Sparkles size={17}/><h3>{t('Travel Tips')}</h3><p>{t('Check the weather and bring a light jacket!')}</p><span className="packing-tip-illustration" aria-hidden="true">🧥</span></aside>
+        <section className="panel packing-summary-progress"><div className="packing-ring" style={{'--packing-progress': `${percentPacked}%`} as React.CSSProperties}><div><strong>{percentPacked}%</strong><span>{t('Packed')}</span></div></div><div className="packing-summary-copy"><h3>{t('Packing Progress')}</h3><strong>{packedUnits} / {totalUnits} {t('items')}</strong><div className="packing-summary-bar"><span style={{width: `${percentPacked}%`}}/></div><div className="packing-summary-pills"><span className="ready"><CheckCircle2 size={14}/> {readyUnits} {t('Ready')}</span><span className="prepare"><Backpack size={14}/> {Math.max(0, totalUnits-readyUnits)} {t('To Prepare')}</span><span className="pending"><Circle size={14}/> {Math.max(0, readyUnits-packedUnits)} {t('Pending')}</span></div></div></section>
+        <section className="panel packing-quick-filters"><h3>{t('Quick Filters')}</h3><div className="packing-filter-buttons">{(managedStage === 'personal' ? ['personal'] as const : ['all','personal','shared'] as const).map(type=><button key={type} className={(managedStage==='personal'||filterType===type)?'selected':''} onClick={()=>setFilterType(type)}>{type === 'all' ? <Grid2X2 size={14}/> : type === 'personal' ? <UserRound size={14}/> : <UsersRound size={14}/>} {t(type==='all'?'All Items':type==='personal'?'Personal':'Shared')}</button>)}</div><label className="packing-only-toggle"><input type="checkbox" checked={onlyNotReady} onChange={e=>setOnlyNotReady(e.target.checked)}/><span>{t('Unpacked Only')}</span></label></section>
+        <aside className="panel packing-tip-card"><Sparkles size={17}/><h3>{t('Travel Tips')}</h3><p>{t('Check the weather and bring a light jacket!')}</p><span className="packing-tip-illustration" aria-hidden="true"><Shirt size={52} strokeWidth={1.6}/></span></aside>
       </div>
       {!managed && <details className="packing-settings"><summary>{t("Members, bags and permissions")}</summary>
         <p>{t("Signed-in UID")}: <code>{uid}</code>. {t("You can update your own status. Owners and admins can manage everyone.")}</p>
@@ -215,8 +215,8 @@ export default function TripPacking({ tripId, tripType, packing, managed = false
           allRows.forEach(a => batch.delete(doc(parent, 'itemAssignments', a.id)));
         });
       }}/></section><aside className="panel packing-members-panel"><h3><Users size={18}/>{t('Packing by Member')}</h3>{roster.map((member,index)=>{const own=data.assignments.filter(a=>a.memberId===member.id&&data.items.some(item=>item.id===a.itemId&&isCurrentAssignment(item,a)));const done=own.filter(a=>a.status==='packed').length;const pct=own.length?Math.round(done/own.length*100):0;return <div className="packing-member-progress" key={member.id}><span className={`packing-member-avatar avatar-${index%5}`}>{member.name.slice(0,1).toUpperCase()}</span><strong>{member.name}</strong><div><span style={{width:`${pct}%`}}/></div><b>{pct}%</b></div>})}</aside></div>
+      <div className="packing-journey-banner"><span><Sparkles size={28}/></span><strong>{t('Happy Journey!')}</strong><span><Luggage size={30}/></span></div>
       <DepartureReadiness key={`${scope}:${uid}`} scope={scope} uid={uid} packing={packing} readOnly={readOnly}/>
-      <div className="packing-journey-banner"><span>🌸</span><strong>{t('Happy Journey!')}</strong><span>🧳</span></div>
       {admin && legacyItems.length > 0 && <details className="packing-settings"><summary>{t("Import legacy checklist")}</summary><p>{t("Copies up to 3 assigned legacy items as shared items without changing the original list. Register personal items above. Previously imported items are skipped.")}</p><button className="soft-button" disabled={disabled || legacyItems.every(i => data.items.some(item => item.id === `legacy-${i.id}`))} onClick={importLegacy}>{t("Copy next 3 items")}</button></details>}
     </>}
   </section>;
