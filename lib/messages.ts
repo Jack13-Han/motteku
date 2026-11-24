@@ -1,3 +1,6 @@
+import { dashboardMessages } from './messages-dashboard';
+import { itineraryMessages } from './messages-itinerary';
+import { dashboardShellMessages } from './messages-dashboard-shell';
 import { mergeMessages } from './messages-merged';
 import { extraJa } from './messages-extra';
 import { tripMessages } from './messages-trips';
@@ -5,6 +8,7 @@ import { nanMessages } from './messages-nan';
 import { weatherMessages } from './messages-weather';
 import { chatMessages } from './messages-chat';
 import { bagMessages } from './messages-bags';
+import { planningMessages } from './messages-planning';
 export type Language = 'ja' | 'en';
 const baseJa: Record<string, string> = {
   'You': 'あなた',
@@ -82,7 +86,7 @@ const baseJa: Record<string, string> = {
   'Something went wrong. Please try again.': 'エラーが発生しました。もう一度お試しください。',
 };
 
-export const japaneseMessages = { ...mergeMessages, ...baseJa, ...extraJa, ...tripMessages, ...nanMessages, ...weatherMessages, ...chatMessages, ...bagMessages };
+export const japaneseMessages = { ...mergeMessages, ...baseJa, ...extraJa, ...tripMessages, ...nanMessages, ...weatherMessages, ...chatMessages, ...bagMessages, ...planningMessages, ...dashboardMessages, ...itineraryMessages, ...dashboardShellMessages };
 export type Params = Record<string, string | number>;
 export function errorKey(error: unknown, fallback: string) {
   return error instanceof Error && Object.hasOwn(japaneseMessages, error.message) ? error.message : fallback;

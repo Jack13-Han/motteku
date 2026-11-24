@@ -2,10 +2,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Bell, CheckCheck, X } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n';
+import { reminderDay, reminderNotificationKey, tripReminders, validReminderDate } from '@/lib/reminders';
 
 type Trip = { id:string; name:string; startDate:string; prepStartDate?:string; items:{id:string;name:string;status:string;dueDate:string}[] };
 type Notice = { id:string; tripId:string; title:string; detail:string; date:string; tab:string };
-const dateKey=(date:Date)=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+const dateKey=reminderDay;
 export default function NotificationCenter({trips,accountId,onOpen}:{trips:Trip[];accountId:string;onOpen:(tripId:string,tab:string)=>void}) {
  const {t}=useLanguage();
  const [open,setOpen]=useState(false);
@@ -16,15 +17,27 @@ export default function NotificationCenter({trips,accountId,onOpen}:{trips:Trip[
  const storageKey=`motteku-notifications-read-${accountId}`;
  useEffect(()=>{try{const saved=JSON.parse(localStorage.getItem(storageKey)||'[]');setRead(Array.isArray(saved)?saved.filter((id:unknown)=>typeof id==='string'):[]);}catch{setRead([]);}},[storageKey]);
  useEffect(()=>{const timer=window.setInterval(()=>setNow(new Date()),60000);return()=>clearInterval(timer);},[]);
+ useEffect(()=>{
+  if(!('Notification'in window)||Notification.permission!=='granted')return;
+  const today=dateKey(now);
+  for(const trip of trips){
+   const reminders=tripReminders(trip.startDate,trip.prepStartDate);
+   for(const reminder of reminders){
+    if(reminder.date!==today)continue;
+    const key=reminderNotificationKey(accountId,trip.id,reminder.date,reminder.id);
+    try{if(localStorage.getItem(key))continue;new Notification(`${t(reminder.title)}: ${trip.name}`,{body:t(reminder.detail),tag:key});localStorage.setItem(key,'1')}catch{}
+   }
+  }
+ },[now,trips,t,accountId]);
  useEffect(()=>{if(!open)return;const close=(event:PointerEvent)=>{if(!root.current?.contains(event.target as Node))setOpen(false);};const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'){setOpen(false);trigger.current?.focus();}};document.addEventListener('pointerdown',close);document.addEventListener('keydown',escape);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',escape);};},[open]);
  const today=dateKey(now);
  const end=new Date(now);end.setDate(end.getDate()+7);
  const until=dateKey(end);
  const notices:Notice[]=[];
  for(const trip of trips){
-  if(trip.startDate<today)continue;
-  const add=(id:string,date:string,title:string,detail:string,tab='Reminders')=>{if(date&&date<=until)notices.push({id:`${trip.id}:${id}:${date}`,tripId:trip.id,title,detail,date,tab});};
-  add('prep',trip.prepStartDate||trip.startDate,t('Preparation starts'),trip.name);
+  if(!validReminderDate(trip.startDate)||trip.startDate<today)continue;
+  const add=(id:string,date:string,title:string,detail:string,tab='Reminders')=>{if(validReminderDate(date)&&date<=until)notices.push({id:`${trip.id}:${id}:${date}`,tripId:trip.id,title,detail,date,tab});};
+  add('prep',tripReminders(trip.startDate,trip.prepStartDate).find(reminder=>reminder.id==='prep')!.date,t('Preparation starts'),trip.name);
   if(trip.startDate){const before=new Date(`${trip.startDate}T12:00:00`);before.setDate(before.getDate()-1);const date=dateKey(before);if(date>=today)add('packing',date,t('Day before departure'),trip.name);}
   add('departure',trip.startDate,t('Trip departure'),trip.name);
   for(const item of trip.items)if(item.status!=='Packed')add(`item:${item.id}`,item.dueDate,t('Item deadline'),`${trip.name} · ${item.name}`,'Packing list');

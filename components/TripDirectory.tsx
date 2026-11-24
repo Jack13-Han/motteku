@@ -1,21 +1,52 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { collection, doc, onSnapshot } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import { useTripAccount } from '@/lib/useTrips';
-import { normalizeInviteCode, type Trip } from '@/lib/trips';
-import { useLanguage } from '@/lib/i18n';
-import TripWorkflowFrame from './TripWorkflowFrame';
-import { Button } from './ui/button';
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { collection, doc, onSnapshot } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { useTripAccount } from "@/lib/useTrips";
+import { normalizeInviteCode, type Trip } from "@/lib/trips";
+import { useLanguage } from "@/lib/i18n";
+import TripWorkflowFrame from "./TripWorkflowFrame";
+import { Button } from "./ui/button";
 
 function TripCard({ id }: { id: string }) {
   const { t, date } = useLanguage();
-  const [trip, setTrip] = useState<Trip | null>(null), [error, setError] = useState('');
-  useEffect(() => { if (!db) return; return onSnapshot(doc(db, 'trips', id), snap => { if (snap.exists()) setTrip(snap.data() as Trip); else setError('Trip could not be loaded.'); }, () => setError('Trip could not be loaded.')); }, [id]);
-  return <article className="panel page-panel"><h2>{trip?.name || t('Loading')}</h2>{error && <p role="alert">{t(error)}</p>}{trip && <><p>{trip.destination}</p><p>{date(trip.startDate)} → {date(trip.endDate)}</p><p>{t('Planned: {count}', { count: trip.plannedMemberCount })} · {t('Joined: {count}', { count: trip.joinedMemberCount })}</p><Button asChild variant="outline"><Link href={`/trips/${id}`}>{t('Open trip')}</Link></Button></>}</article>;
+  const [trip, setTrip] = useState<Trip | null>(null),
+    [error, setError] = useState("");
+  useEffect(() => {
+    if (!db) return;
+    return onSnapshot(
+      doc(db, "trips", id),
+      (snap) => {
+        if (snap.exists()) setTrip(snap.data() as Trip);
+        else setError("Trip could not be loaded.");
+      },
+      () => setError("Trip could not be loaded."),
+    );
+  }, [id]);
+  return (
+    <article className="panel page-panel">
+      <h2>{trip?.name || t("Loading")}</h2>
+      {error && <p role="alert">{t(error)}</p>}
+      {trip && (
+        <>
+          <p>{trip.destination}</p>
+          <p>
+            {date(trip.startDate)} → {date(trip.endDate)}
+          </p>
+          <p>
+            {t("Planned: {count}", { count: trip.plannedMemberCount })} ·{" "}
+            {t("Joined: {count}", { count: trip.joinedMemberCount })}
+          </p>
+          <Button asChild variant="outline">
+            <Link href={`/trips/${id}`}>{t("Open trip")}</Link>
+          </Button>
+        </>
+      )}
+    </article>
+  );
 }
 
 export default function TripDirectory() {
@@ -23,9 +54,20 @@ export default function TripDirectory() {
   const [ids, setIds] = useState<string[]>([]), [loaded, setLoaded] = useState(false), [error, setError] = useState(''), [code, setCode] = useState('');
   const [friends, setFriends] = useState<{ uid: string; name: string; tripId: string }[]>([]);
   useEffect(() => {
-    setIds([]); setLoaded(false);
+    setIds([]);
+    setLoaded(false);
     if (!db || !user) return;
-    return onSnapshot(collection(db, 'users', user.uid, 'tripMemberships'), snap => { setIds(snap.docs.map(d => d.id)); setLoaded(true); }, () => { setError('Trips could not be loaded. Check Firestore rules.'); setLoaded(true); });
+    return onSnapshot(
+      collection(db, "users", user.uid, "tripMemberships"),
+      (snap) => {
+        setIds(snap.docs.map((d) => d.id));
+        setLoaded(true);
+      },
+      () => {
+        setError("Trips could not be loaded. Check Firestore rules.");
+        setLoaded(true);
+      },
+    );
   }, [user?.uid]);
   useEffect(() => {
     setFriends([]);

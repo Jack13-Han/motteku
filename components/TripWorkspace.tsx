@@ -15,6 +15,7 @@ import TripDetailsForm from './TripDetailsForm';
 import WeatherAdvice from './WeatherAdvice';
 import { addAdviceItem } from '@/lib/addAdviceItem';
 import { Button } from './ui/button';
+import GroupPolls from './GroupPolls';
 
 const statusLabels = { draft: 'Draft', recruiting: 'Recruiting', confirmed: 'Confirmed', completed: 'Completed' };
 const roleLabels = { owner: 'Owner', admin: 'Admin', member: 'Member' };
@@ -87,6 +88,7 @@ export default function TripWorkspace({ tripId }: { tripId: string }) {
       {trip.mode === 'group' && !detailsReady && (manager && members.length >= 2
         ? <TripDetailsForm tripId={tripId} plannedMemberCount={trip.plannedMemberCount}/>
         : <section className="panel page-panel"><h2>{t('Choose your trip')}</h2><p>{t(members.length < 2 ? 'Invite friends and wait for one to accept before choosing the destination.' : 'Waiting for the trip owner to choose the destination and dates.')}</p></section>)}
+      <GroupPolls key={`${tripId}:${user?.uid || ''}`} kind="trip" scopeId={tripId} uid={user?.uid || ''} userName={members.find(member => member.uid === user?.uid)?.name || user?.displayName || ''} canManage={manager} disabled={locked || trip.status === 'completed'}/>
       {detailsReady && <WeatherAdvice
         key={trip.id}
         trip={{id:trip.id,name:trip.name,type:templateTripTypes[trip.type],location:trip.destination,startDate:trip.startDate,endDate:trip.endDate,people:members.length}}
