@@ -5,6 +5,7 @@ import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { auth, db, firebaseConfigured } from '@/lib/firebase';
 import { CalendarDays, Check, CheckCheck, CloudSun, Copy, Download, History, ListChecks, LoaderCircle, MessageCircle, Plus, ShoppingCart, Sparkles, Users, Wallet, Weight, X, TentTree, Trash2, Save, Cloud, ClipboardCheck, LogOut, PanelLeftClose, PanelLeftOpen, Search, Heart, Route, Home as HomeIcon } from 'lucide-react';
 import TravelDashboard from '@/components/TravelDashboard';
+import type { TripCover } from '@/lib/tripCover';
 import TripItinerary from '@/components/TripItinerary';
 import { normalizeActivities, type TripActivity } from '@/lib/itinerary';
 import TripChat, { parseChatInvitation } from '@/components/TripChat';
@@ -38,7 +39,7 @@ type Item = { quantity?:number; id:string; name:string; category:string; status:
 type Member = { id:string; name:string };
 type Expense = {id:string;name:string;amount:number;payer:string};
 type Bag = {id:string;name:string;photoUrl:string;verified:boolean};
-type Trip = TravelTripSettings & { activities?:TripActivity[]; pendingPacking?:TemplateSelection[]; id:string; name:string; type:string; location:string; startDate:string; endDate:string; prepStartDate?:string; people:number; budget:number; members:Member[]; items:Item[]; expenses:Expense[]; bags:Bag[]; sharedChatId?:string; inviteCode?:string; createdAt:string };
+type Trip = TravelTripSettings & Partial<TripCover> & { activities?:TripActivity[]; pendingPacking?:TemplateSelection[]; id:string; name:string; type:string; location:string; startDate:string; endDate:string; prepStartDate?:string; people:number; budget:number; members:Member[]; items:Item[]; expenses:Expense[]; bags:Bag[]; sharedChatId?:string; inviteCode?:string; createdAt:string };
 type Workspace = { trips:Trip[]; activeTripId:string; history:Trip[] };
 const templates:Record<string,string[]> = {
   Camping:['Tent','Sleeping bag','Sleeping mat','Flashlight','Portable charger','Water bottle','First aid kit','Rain jacket','Cooking set','Trash bags'],
@@ -65,6 +66,7 @@ export default function Home(){
  const [workspace,setWorkspace]=useState<Workspace>(seed); const [ready,setReady]=useState(false); const [user,setUser]=useState<User|null>(null); const [remoteLoaded,setRemoteLoaded]=useState(false); const [remoteError,setRemoteError]=useState(false); const [tab,setTab]=useState('Overview'); const [newName,setNewName]=useState(''); const [newType,setNewType]=useState('Camping'); const [newLocation,setNewLocation]=useState('Osaka, Japan'); const [newStart,setNewStart]=useState(new Date(Date.now()+7*86400000).toISOString().slice(0,10)); const [newEnd,setNewEnd]=useState(new Date(Date.now()+9*86400000).toISOString().slice(0,10)); const [newBudget,setNewBudget]=useState('15000'); const [itemName,setItemName]=useState(''); const [memberName,setMemberName]=useState(''); const [expenseName,setExpenseName]=useState(''); const [expenseAmount,setExpenseAmount]=useState(''); const [expensePayer,setExpensePayer]=useState(''); const [notice,setNotice]=useState('');
  const [noticeParams,setNoticeParams]=useState<Record<string,string|number>>({});
  const [newMemberNames,setNewMemberNames]=useState('');
+ const [isCustomTripType,setIsCustomTripType]=useState(false);
  const newTravelers=newMemberNames.split('\n').map(name=>name.trim()).filter(Boolean);
  const [memberToRemove,setMemberToRemove]=useState<Member|null>(null);
  const applyingDraft=useRef('');
@@ -88,6 +90,11 @@ export default function Home(){
  const travelMembers=packing.loaded && packing.data ? packing.data.members.filter(m=>m.active!==false) : active?.members || [];
  const memberAdmin=!!packing.data && (packing.data.ownerUid===packingUid || packing.data.adminUids.includes(packingUid));
  const updateTrip=(fn:(trip:Trip)=>Trip)=>setWorkspace(w=>({...w,trips:w.trips.map(t=>t.id===w.activeTripId?fn(t):t)}));
+ const updateTripCover=(tripId:string,cover:TripCover)=>setWorkspace(w=>({...w,trips:w.trips.map(trip=>{
+   if(trip.id!==tripId)return trip;
+   const {coverImageAttribution: previousAttribution,...rest}=trip;
+   return {...rest,...cover};
+ })}));
  useEffect(()=>{
    if(!firebaseConfigured || !auth || !db){router.replace('/login');return;}
    const unsubscribe=onAuthStateChanged(auth, currentUser=>{
@@ -291,7 +298,11 @@ export default function Home(){
    <div className="panel-head"><div><h3 id="create-trip-title">{tr('Create a new trip')}</h3><p>{tr('Choose a template or enter a custom trip type. Review the checklist before saving.')}</p></div><Plus className="muted-icon"/></div>
    <fieldset disabled={draftLoading || !!tripDraft} className="trip-details"><form className="create-form" onSubmit={e=>{e.preventDefault();void addTrip();}}>
      <label>{tr('Trip name')}<input maxLength={200} value={newName} onChange={e=>setNewName(e.target.value)} placeholder={tr('e.g. Summer beach trip')}/></label>
-     <label>{tr('Trip type')}<input value={newType} onChange={e=>setNewType(e.target.value)} list="trip-type-options" required maxLength={60} placeholder={tr('Choose or enter a trip type')}/><datalist id="trip-type-options">{Object.keys(templates).map(type=><option key={type} value={type} label={tr(type)}/>)}</datalist></label>
+     <label>{tr('Trip type')}<select value={isCustomTripType ? '' : newType} onChange={e=>{setIsCustomTripType(e.target.value==='');setNewType(e.target.value);}}>
+       {Object.keys(templates).map(type=><option key={type} value={type}>{tr(type)}</option>)}
+       <option value="">{tr('Custom trip type')}</option>
+     </select></label>
+     {isCustomTripType && <label>{tr('Custom trip type')}<input value={newType} onChange={e=>setNewType(e.target.value)} required maxLength={60}/></label>}
      <label>{tr('Destination')}<input required maxLength={200} value={newLocation} onChange={e=>setNewLocation(e.target.value)} placeholder={tr('Example: Osaka, Japan')}/></label>
      <label>{tr('Start date')}<input type="date" required min={minTripDate} value={newStart} onChange={e=>{const value=e.target.value;if(value&&value<minTripDate){setDraftError('Start date must be today or later.');return;}setNewStart(value);if(value&&newEnd<value)setNewEnd(value);setDraftError('');}}/></label>
      <label>{tr('End date')}<input type="date" required min={minEndDate} value={newEnd} onChange={e=>{const value=e.target.value;if(value&&value<minEndDate){setDraftError('End date must be on or after the start date.');return;}setNewEnd(value);setDraftError('');}}/></label>
@@ -478,7 +489,7 @@ export default function Home(){
   {packing.error && tab!=='Packing list' && <p className="notice" role="alert">{tr(packing.error)}</p>}
   {memberToRemove && packing.loaded && packing.data && travelMembers.length>1 && <MemberRemovalDialog data={packing.data} next={reconcilePacking(packing.data,travelMembers.filter(m=>m.id!==memberToRemove.id),packingScope,packingUid)} removed={packing.data.members.filter(m=>m.id===memberToRemove.id)} legacyCount={active.items.filter(i=>i.assignee===memberToRemove.name).length} busy={packing.busy} onCancel={()=>setMemberToRemove(null)} onConfirm={()=>void confirmMemberRemoval()}/>}
   {!active&&tab!=='History'&&tab!=='Group chat'?<section className="empty-state"><TentTree size={42}/><h2>{tr("Ready to plan your next trip?")}</h2><p>{tr("Create a trip below to start your packing list.")}</p></section>:active&&<>
-  {tab==='Overview'&&<TravelDashboard key={active.id} trip={active} packed={stats.packed} total={stats.total} spent={stats.spent} onNavigate={setTab} onDeleteTrip={deleteActiveTrip}/>}
+  {tab==='Overview'&&<TravelDashboard key={active.id} trip={active} packed={stats.packed} total={stats.total} spent={stats.spent} onNavigate={setTab} onDeleteTrip={deleteActiveTrip} coverAccountId={remoteError ? undefined : user?.uid} onChangeCover={cover=>updateTripCover(active.id,cover)}/>}
   {tab==='Overview'&&<NextCheckCard key={active.id} controller={itemChecks} packedCount={packing.data ? snapshotPackedAssignments(packing.data).length : 0} onOpen={()=>setTab('Item check')}/>}
   {tab==='Itinerary'&&<TripItinerary key={active.id} trip={active} onChange={activities=>updateTrip(t=>({...t,activities}))}/>}
   {tab==='Packing list'&&<><TripPacking packing={packing} tripType={active.type} key={`${active.id}:${active.sharedChatId||''}`} tripId={active.id} roomId={active.sharedChatId} userUid={user?.uid} members={travelMembers} bags={active.bags||[]} legacyItems={active.items}/><details className="panel legacy-packing"><summary>{tr("Legacy checklist / shopping management")}</summary>  <section className="panel page-panel"><div className="panel-head"><div><h3>{tr("Everything you need to bring")}</h3><p>{tr("Track ownership, shopping, weight and responsibility.")}</p></div><span className="count-badge">{active.items.length} {tr('items')}</span></div><form className="add-row" onSubmit={e=>{e.preventDefault();addItem()}}><input placeholder={tr("Add an item, e.g. portable charger")} value={itemName} onChange={e=>setItemName(e.target.value)}/><button className="primary" type="submit"><Plus size={16}/> {tr("Add item")}</button></form><div className="table-wrap"><table><thead><tr><th>{tr("Item")}</th><th>{tr("Status")}</th><th>{tr("Assigned to")}</th><th>{tr("Weight (kg)")}</th><th>{tr("Price (¥)")}</th><th>{tr("Comment")}</th><th></th></tr></thead><tbody>{active.items.map(i=><tr key={i.id}><td><b>{i.name}{(i.quantity||1)>1?` x ${i.quantity}`:null}</b><small className="cell-sub">{tr(i.category)}</small></td><td><select className={`status-select status-${i.status.replaceAll(' ','-').toLowerCase()}`} value={i.status} onChange={e=>changeStatus(i.id,e.target.value as ItemStatus)}>{(['Owned','Need to buy','Purchased','Packed'] as ItemStatus[]).map(s=><option key={s} value={s}>{tr(s)}</option>)}</select></td><td><select value={i.assignee} onChange={e=>updateTrip(t=>({...t,items:t.items.map(x=>x.id===i.id?{...x,assignee:e.target.value}:x)}))}><option value="Unassigned">{tr("Unassigned")}</option>{travelMembers.map(m=><option key={m.id}>{m.name}</option>)}</select></td><td><input className="table-input number" type="number" min="0" step="0.1" value={i.weight} onChange={e=>updateTrip(t=>({...t,items:t.items.map(x=>x.id===i.id?{...x,weight:Number(e.target.value)}:x)}))}/></td><td><input className="table-input number" type="number" min="0" step="1" value={i.price} onChange={e=>updateTrip(t=>({...t,items:t.items.map(x=>x.id===i.id?{...x,price:Number(e.target.value)}:x)}))}/></td><td><input className="table-input" placeholder={tr("Add note…")} value={i.comment} onChange={e=>updateTrip(t=>({...t,items:t.items.map(x=>x.id===i.id?{...x,comment:e.target.value}:x)}))}/></td><td><button className="icon-button danger" aria-label={tr("Delete {name}",{name:i.name})} onClick={()=>updateTrip(t=>({...t,items:t.items.filter(x=>x.id!==i.id)}))}><Trash2 size={15}/></button></td></tr>)}</tbody></table></div><div className="bottom-actions"><button className="soft-button" onClick={assignFairly}><Users size={16}/> {tr("Auto-assign unassigned")}</button><button className="soft-button" onClick={()=>{const csv=[['Item','Quantity','Type','Status','Assigned to','Weight (kg)','Price (¥)','Comment'].map(label=>tr(label)).join(','),...active.items.map(i=>[i.name,i.quantity||1,tr(i.category),tr(i.status),i.assignee==='Unassigned'?tr('Unassigned'):i.assignee,i.weight,i.price,i.comment].map(v=>`"${String(v).replaceAll('"','""')}"`).join(','))].join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}));a.download='motteku-packing-list.csv';a.click();URL.revokeObjectURL(a.href)}}><Download size={16}/> {tr("Export CSV")}</button></div></section></details></>}

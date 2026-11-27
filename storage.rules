@@ -12,6 +12,13 @@ service firebase.storage {
       allow delete: if false;
     }
 
+    match /users/{userId}/tripCovers/{tripId}/{fileName} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null && request.auth.uid == userId
+        && request.resource.size > 0 && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+
     // Chat is text-only. Unmatched chat photo paths have no read or write access.
   }
 }

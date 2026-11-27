@@ -1,7 +1,6 @@
 'use client';
 
 import { FormEvent, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   browserLocalPersistence,
@@ -288,7 +287,9 @@ function authErrorMessage(error: unknown) {
 export default function AuthForm({ mode }: AuthFormProps) {
   const router = useRouter();
   const { language, t } = useLanguage();
-  const isRegister = mode === 'register';
+  const [activeMode, setActiveMode] = useState(mode);
+  const [submittedMode, setSubmittedMode] = useState(mode);
+  const isRegister = activeMode === 'register';
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -320,9 +321,38 @@ export default function AuthForm({ mode }: AuthFormProps) {
     return onAuthStateChanged(auth, (currentUser) => {
       setAuthReady(true);
       // Let the active submission finish saving the profile and showing success.
-      if (currentUser && !currentUser.isAnonymous && !submittingRef.current) router.replace(destination);
+      if (currentUser && !currentUser.isAnonymous && !submittingRef.current) router.replace(safeReturnPath(new URLSearchParams(window.location.search).get('next')));
     });
   }, [router]);
+
+  useEffect(() => {
+    // The persistent route shell can change mode without remounting this form.
+    setActiveMode(mode);
+    setReturnTo(safeReturnPath(new URLSearchParams(window.location.search).get('next')));
+    setError(message => message === 'Firebase Authentication is not configured. Check your Firebase project settings.' ? message : '');
+    setInfo('');
+  }, [mode]);
+
+  useEffect(() => {
+    const syncMode = () => {
+      if (window.location.pathname !== '/login' && window.location.pathname !== '/register') return;
+      setActiveMode(window.location.pathname === '/register' ? 'register' : 'login');
+      setReturnTo(safeReturnPath(new URLSearchParams(window.location.search).get('next')));
+      setError(message => message === 'Firebase Authentication is not configured. Check your Firebase project settings.' ? message : '');
+      setInfo('');
+    };
+    syncMode();
+    window.addEventListener('popstate', syncMode);
+    return () => window.removeEventListener('popstate', syncMode);
+  }, []);
+
+  function switchMode(nextMode: AuthFormProps['mode']) {
+    if (nextMode === activeMode || submittingRef.current || resettingRef.current || busy || resetBusy || success) return;
+    setActiveMode(nextMode);
+    setError(message => message === 'Firebase Authentication is not configured. Check your Firebase project settings.' ? message : '');
+    setInfo(''); setProfileWarning('');
+    window.history.pushState(null, '', nextMode === 'register' ? registerHref : loginHref);
+  }
 
   useEffect(() => {
     if (!success) return;
@@ -349,6 +379,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
     setError('');
     setInfo('');
     setProfileWarning('');
+    setSubmittedMode(activeMode);
     submittingRef.current = true;
     setBusy(true);
     let completed = false;
@@ -440,13 +471,13 @@ export default function AuthForm({ mode }: AuthFormProps) {
         </header>
         <nav className="auth-mode-switch" aria-label={t('Authentication mode')}>
           <span className={`auth-mode-indicator ${isRegister ? 'signup-active' : ''}`} aria-hidden="true" />
-          <Link href={loginHref} aria-current={!isRegister ? 'page' : undefined}>{t('Sign In')}</Link>
-          <Link href={registerHref} aria-current={isRegister ? 'page' : undefined}>{t('Sign Up')}</Link>
+          <button type="button" disabled={busy || resetBusy || success} onClick={() => switchMode('login')} aria-current={!isRegister ? 'page' : undefined}>{t('Sign In')}</button>
+          <button type="button" disabled={busy || resetBusy || success} onClick={() => switchMode('register')} aria-current={isRegister ? 'page' : undefined}>{t('Sign Up')}</button>
         </nav>
 
         {success ? <div className="auth-success" role="status" aria-live="polite">
           <CheckCircle2 className="auth-success-icon" size={38} aria-hidden="true" />
-          <h2 className="auth-success-title">{t(isRegister ? 'Account created successfully!' : 'Signed in successfully!')}</h2>
+          <h2 className="auth-success-title">{t(submittedMode === 'register' ? 'Account created successfully!' : 'Signed in successfully!')}</h2>
           <p className="auth-success-message">{t('You are signed in. Opening Motteku…')}</p>
           {profileWarning && <p className="auth-profile-warning">{t(profileWarning)}</p>}
           <button type="button" className="primary auth-submit" onClick={() => router.replace(returnTo)}>{t('Continue to Motteku')}</button>
@@ -467,13 +498,15 @@ export default function AuthForm({ mode }: AuthFormProps) {
               <button className="auth-password-toggle" type="button" onClick={() => setShowPassword(value => !value)} aria-label={t(showPassword ? 'Hide password' : 'Show password')} aria-pressed={showPassword}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button>
             </span>
           </label>
-          {!isRegister && <div className="auth-signin-options">
-            <label className="auth-remember"><input type="checkbox" checked={rememberMe} onChange={event => setRememberMe(event.target.checked)} /><span>{t('Remember me')}</span></label>
-            <button type="button" className="auth-forgot" disabled={busy || resetBusy} onClick={() => void handlePasswordReset()}>{t(resetBusy ? 'Please wait…' : 'Forgot password?')}</button>
-          </div>}
+          <div className={`auth-signin-options-wrap ${!isRegister ? 'open' : ''}`} aria-hidden={isRegister}>
+            <div className="auth-signin-options">
+              <label className="auth-remember"><input type="checkbox" tabIndex={isRegister ? -1 : 0} disabled={busy || resetBusy || isRegister} checked={rememberMe} onChange={event => setRememberMe(event.target.checked)} /><span>{t('Remember me')}</span></label>
+              <button type="button" className="auth-forgot" tabIndex={isRegister ? -1 : 0} disabled={busy || resetBusy || isRegister} onClick={() => void handlePasswordReset()}>{t(resetBusy ? 'Please wait…' : 'Forgot password?')}</button>
+            </div>
+          </div>
           <button className="primary auth-submit" type="submit" disabled={busy || resetBusy || !authReady || !firebaseConfigured}>
             {busy && <LoaderCircle className="auth-submit-spinner" size={16} aria-hidden="true" />}
-            {busy ? t(isRegister ? 'Creating Account…' : 'Signing In…') : t(isRegister ? 'Create Account' : 'Sign In')}
+            {busy ? t(submittedMode === 'register' ? 'Creating Account…' : 'Signing In…') : t(isRegister ? 'Create Account' : 'Sign In')}
           </button>
         </form>}
 

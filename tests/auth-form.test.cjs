@@ -9,11 +9,12 @@ const textOf = node => Array.isArray(node) ? node.map(textOf).join(' ') : node &
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 
 function harness(options = {}) {
-  const calls = [], redirects = [], timers = new Map(), slots = [], effects = [];
+  const calls = [], redirects = [], routePushes = [], documentNavigations = [], timers = new Map(), slots = [], effects = [], historyWrites = [];
   const auth = { currentUser: options.user || null, languageCode: null };
   const local = { kind: 'local' }, session = { kind: 'session' };
-  let observer, index = 0, dirty = false, tree, timerId = 0, focusCount = 0, pending = [];
-  const router = { replace: value => redirects.push(value) };
+  let observer, index = 0, dirty = false, tree, timerId = 0, focusCount = 0, pending = [], authSubscriptions = 0;
+  let routeMode = options.mode || 'login';
+  const router = { replace: value => redirects.push(value), push: value => routePushes.push(value) };
   const react = {
     useState(initial) {
       const slot = index++;
@@ -31,7 +32,7 @@ function harness(options = {}) {
   };
   const sdk = {
     browserLocalPersistence: local, browserSessionPersistence: session,
-    onAuthStateChanged(_auth, callback) { observer = callback; callback(auth.currentUser); return () => { observer = null; }; },
+    onAuthStateChanged(_auth, callback) { authSubscriptions++; observer = callback; callback(auth.currentUser); return () => { observer = null; }; },
     async setPersistence(_auth, persistence) { calls.push({ type: 'persistence', persistence }); if (options.persistence) await options.persistence(); },
     EmailAuthProvider: { credential: (email, password) => ({ email, password }) },
     async signInWithEmailAndPassword(_auth, email, password) {
@@ -51,8 +52,42 @@ function harness(options = {}) {
     async updateProfile(user, profile) { calls.push({ type: 'profile', uid: user.uid, profile }); if (options.profile) await options.profile(); },
     async sendPasswordResetEmail(_auth, email) { calls.push({ type: 'reset', email, language: auth.languageCode }); if (options.reset) await options.reset(); },
   };
+  const listeners = new Map();
+  const initialUrl = `http://localhost:3000/${options.mode === 'register' ? 'register' : 'login'}${options.search || ''}`;
+  const entries = [{ state: { __NA: true }, url: initialUrl }];
+  let historyIndex = 0;
+  const location = {
+    href: initialUrl, pathname: new URL(initialUrl).pathname, search: options.search || '', hash: '',
+    assign: value => documentNavigations.push(['assign', value]),
+    replace: value => documentNavigations.push(['replace', value]),
+    reload: () => documentNavigations.push(['reload']),
+  };
+  function updateLocation(value) {
+    const url = new URL(value, location.href);
+    Object.assign(location, { href: url.href, pathname: url.pathname, search: url.search, hash: url.hash });
+    return url.href;
+  }
   const window = {
-    location: { search: options.search || '' },
+    location,
+    history: {
+      get state() { return entries[historyIndex].state; },
+      pushState(state, _unused, value) {
+        const url = updateLocation(value);
+        entries.splice(historyIndex + 1);
+        entries.push({ state, url }); historyIndex++;
+        historyWrites.push({ type: 'push', url });
+      },
+      replaceState(state, _unused, value) {
+        const url = updateLocation(value);
+        entries[historyIndex] = { state, url };
+        historyWrites.push({ type: 'replace', url });
+      },
+    },
+    addEventListener(name, callback) {
+      if (!listeners.has(name)) listeners.set(name, new Set());
+      listeners.get(name).add(callback);
+    },
+    removeEventListener(name, callback) { listeners.get(name)?.delete(callback); },
     setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, delay }); return id; },
     clearTimeout(id) { timers.delete(id); },
   };
@@ -79,7 +114,7 @@ function harness(options = {}) {
     do {
       if (++rounds > 20) throw Error('Render did not stabilize');
       dirty = false; index = 0; pending = [];
-      tree = exports.default({ mode: options.mode || 'login' });
+      tree = exports.default({ mode: routeMode });
       for (const effect of pending) {
         effects[effect.slot]?.cleanup?.();
         effects[effect.slot] = { dependencies: effect.dependencies, cleanup: effect.fn() };
@@ -102,8 +137,22 @@ function harness(options = {}) {
   const reset = () => { find(node => node.type === 'button' && node.props.className === 'auth-forgot').props.onClick(); return settle(); };
   const fire = delay => { for (const [id, timer] of [...timers]) if (timer.delay === delay) { timers.delete(id); timer.fn(); } render(); };
   const cleanup = () => effects.forEach(effect => effect?.cleanup?.());
+  const modeButton = label => find(node => node.type === 'button' && textOf(node) === label);
+  const switchMode = label => { modeButton(label).props.onClick({ preventDefault() {} }); render(); };
+  function traverse(offset) {
+    const next = historyIndex + offset;
+    assert.ok(next >= 0 && next < entries.length, 'Requested browser history entry exists');
+    historyIndex = next; updateLocation(entries[next].url);
+    for (const callback of listeners.get('popstate') || []) callback({ state: entries[next].state });
+    render();
+  }
   render();
-  return { auth, calls, redirects, local, session, render, nodes, find, change, remember, submit, reset, settle, fire, cleanup, text: () => textOf(tree), focusCount: () => focusCount, emitAuth: user => { auth.currentUser = user; observer?.(user); render(); } };
+  const navigateAuth = (nextMode, search = location.search) => {
+    routeMode = nextMode;
+    updateLocation(`/${nextMode === 'register' ? 'register' : 'login'}${search}`);
+    render();
+  };
+  return { auth, calls, redirects, routePushes, documentNavigations, historyWrites, location, local, session, render, nodes, find, change, remember, submit, reset, settle, fire, cleanup, switchMode, modeButton, navigateAuth, back: () => traverse(-1), forward: () => traverse(1), authSubscriptions: () => authSubscriptions, listenerCount: name => listeners.get(name)?.size || 0, text: () => textOf(tree), focusCount: () => focusCount, emitAuth: user => { auth.currentUser = user; observer?.(user); render(); } };
 }
 
 test('remember me selects local or session persistence before email sign-in', async () => {
@@ -193,4 +242,148 @@ test('missing Firebase configuration remains visible and cannot request authenti
   assert.match(ui.text(), /Firebase Authentication is not configured/);
   ui.fire(3500); assert.match(ui.text(), /Firebase Authentication is not configured/);
   await ui.submit(); assert.equal(ui.calls.length, 0); ui.cleanup();
+});
+
+test('switching auth mode retains form fields and next destination without navigation or re-subscribing', () => {
+  const ui = harness({ search: '?next=%2Ftrips%2Fgroup-one' });
+  ui.change('email', 'han@example.test'); ui.change('current-password', 'retained-password'); ui.remember(false);
+  assert.equal(ui.authSubscriptions(), 1);
+  assert.equal(ui.modeButton('Sign Up').props.type, 'button');
+  ui.switchMode('Sign Up');
+  assert.equal(ui.location.pathname, '/register');
+  assert.equal(new URLSearchParams(ui.location.search).get('next'), '/trips/group-one');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'new-password').props.value, 'retained-password');
+  ui.change('name', 'Han Wai Tun');
+  ui.switchMode('Sign In');
+  assert.equal(ui.location.pathname, '/login');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'email').props.value, 'han@example.test');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'current-password').props.value, 'retained-password');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.type === 'checkbox').props.checked, false);
+  ui.switchMode('Sign Up');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'name').props.value, 'Han Wai Tun');
+  assert.equal(ui.authSubscriptions(), 1, 'The Firebase observer stays mounted across mode changes');
+  assert.deepEqual(ui.calls, []); assert.deepEqual(ui.redirects, []); assert.deepEqual(ui.routePushes, []); assert.deepEqual(ui.documentNavigations, []);
+  const entries = ui.historyWrites.length;
+  ui.switchMode('Sign Up');
+  assert.equal(ui.historyWrites.length, entries, 'Selecting the active mode does not add duplicate history');
+  ui.cleanup();
+});
+
+test('Back and Forward restore the auth mode while keeping credentials and cleaning the history listener', () => {
+  const ui = harness({ search: '?next=%2Ftrips' });
+  ui.change('email', 'han@example.test'); ui.change('current-password', 'retained-password');
+  ui.switchMode('Sign Up'); ui.change('name', 'Han'); ui.switchMode('Sign In');
+  assert.equal(ui.listenerCount('popstate'), 1);
+  ui.back();
+  assert.equal(ui.location.pathname, '/register');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'name').props.required, true);
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'new-password').props.value, 'retained-password');
+  ui.back();
+  assert.equal(ui.location.pathname, '/login');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'name').props.required, false);
+  ui.forward();
+  assert.equal(ui.location.pathname, '/register');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'name').props.value, 'Han');
+  assert.equal(new URLSearchParams(ui.location.search).get('next'), '/trips');
+  assert.equal(ui.authSubscriptions(), 1); assert.deepEqual(ui.calls, []); assert.deepEqual(ui.redirects, []); assert.deepEqual(ui.documentNavigations, []);
+  ui.cleanup(); assert.equal(ui.listenerCount('popstate'), 0);
+});
+
+test('same-frame mode clicks cannot interrupt an in-flight login', async () => {
+  const gate = deferred();
+  const ui = harness({ persistence: () => gate.promise });
+  ui.change('email', 'han@example.test'); ui.change('current-password', 'password');
+  const pending = ui.submit();
+  ui.switchMode('Sign Up');
+  assert.equal(ui.location.pathname, '/login'); assert.equal(ui.historyWrites.length, 0);
+  assert.equal(ui.modeButton('Sign Up').props.disabled, true);
+  assert.deepEqual(ui.calls.map(call => call.type), ['persistence']);
+  gate.resolve(); await pending; ui.render();
+  assert.match(ui.text(), /Signed in successfully!/); ui.cleanup();
+});
+
+test('mode switching cannot interrupt an in-flight password reset', async () => {
+  const gate = deferred();
+  const ui = harness({ reset: () => gate.promise });
+  ui.change('email', 'han@example.test'); await ui.reset();
+  ui.switchMode('Sign Up');
+  assert.equal(ui.location.pathname, '/login'); assert.equal(ui.historyWrites.length, 0);
+  assert.equal(ui.modeButton('Sign Up').props.disabled, true);
+  assert.deepEqual(ui.calls.map(call => call.type), ['reset']);
+  gate.resolve(); await ui.settle();
+  assert.match(ui.text(), /Password reset email sent/); ui.cleanup();
+});
+
+test('Back during authentication preserves the submitted operation and its correct success heading', async () => {
+  for (const registration of [false, true]) {
+    const gate = deferred();
+    const ui = harness({ mode: registration ? 'login' : 'register', persistence: () => gate.promise, search: '?next=%2Ftrips' });
+    ui.switchMode(registration ? 'Sign Up' : 'Sign In');
+    if (registration) ui.change('name', 'Han Wai Tun');
+    ui.change('email', 'han@example.test'); ui.change(registration ? 'new-password' : 'current-password', 'password');
+    const pending = ui.submit();
+    ui.back();
+    gate.resolve(); await pending; ui.render();
+    assert.deepEqual(ui.calls.map(call => call.type), registration ? ['persistence', 'register', 'profile'] : ['persistence', 'login']);
+    assert.match(ui.text(), registration ? /Account created successfully!/ : /Signed in successfully!/);
+    assert.doesNotMatch(ui.text(), registration ? /Signed in successfully!/ : /Account created successfully!/);
+    assert.deepEqual(ui.documentNavigations, []); assert.deepEqual(ui.redirects, []);
+    ui.fire(1200); assert.deepEqual(ui.redirects, ['/trips']); ui.cleanup();
+  }
+});
+
+test('switching mode keeps the configuration explanation when authentication is unavailable', () => {
+  const ui = harness({ configured: false });
+  ui.switchMode('Sign Up');
+  assert.match(ui.text(), /Firebase Authentication is not configured/);
+  ui.switchMode('Sign In');
+  assert.match(ui.text(), /Firebase Authentication is not configured/);
+  assert.deepEqual(ui.calls, []); ui.cleanup();
+});
+
+test('collapsed sign-in options stay mounted but cannot receive keyboard focus during sign-up', () => {
+  const ui = harness();
+  ui.remember(false);
+  ui.switchMode('Sign Up');
+  const wrapper = ui.find(node => typeof node.props.className === 'string' && node.props.className.startsWith('auth-signin-options-wrap'));
+  assert.equal(wrapper.props['aria-hidden'], true);
+  const checkbox = ui.find(node => node.type === 'input' && node.props.type === 'checkbox');
+  const reset = ui.find(node => node.type === 'button' && node.props.className === 'auth-forgot');
+  for (const control of [checkbox, reset]) {
+    assert.equal(control.props.disabled, true);
+    assert.equal(control.props.tabIndex, -1);
+  }
+  ui.switchMode('Sign In');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.type === 'checkbox').props.checked, false);
+  assert.equal(ui.find(node => node.type === 'button' && node.props.className === 'auth-forgot').props.disabled, false);
+  assert.deepEqual(ui.calls, []);
+  ui.cleanup();
+});
+
+test('the persistent shell can change mode props without losing credentials or resubscribing', () => {
+  const ui = harness({ search: '?next=%2Ftrips' });
+  ui.change('email', 'han@example.test');
+  ui.change('current-password', 'retained-password');
+  ui.remember(false);
+  ui.navigateAuth('register', '?next=%2Ftrips%2Fshared-trip');
+  assert.equal(ui.modeButton('Sign Up').props['aria-current'], 'page');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'name').props.required, true);
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'new-password').props.value, 'retained-password');
+  ui.change('name', 'Han Wai Tun');
+  ui.render();
+  assert.equal(ui.modeButton('Sign Up').props['aria-current'], 'page', 'Unrelated renders cannot restore the previous route mode');
+  ui.navigateAuth('login');
+  assert.equal(ui.modeButton('Sign In').props['aria-current'], 'page');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'email').props.value, 'han@example.test');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'current-password').props.value, 'retained-password');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.type === 'checkbox').props.checked, false);
+  ui.navigateAuth('register');
+  assert.equal(ui.find(node => node.type === 'input' && node.props.autoComplete === 'name').props.value, 'Han Wai Tun');
+  ui.switchMode('Sign In');
+  assert.equal(new URLSearchParams(ui.location.search).get('next'), '/trips/shared-trip');
+  assert.equal(ui.authSubscriptions(), 1);
+  assert.deepEqual(ui.calls, []);
+  assert.deepEqual(ui.redirects, []);
+  assert.deepEqual(ui.documentNavigations, []);
+  ui.cleanup();
 });
