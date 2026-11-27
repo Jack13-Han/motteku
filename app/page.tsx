@@ -66,6 +66,7 @@ export default function Home(){
  const [workspace,setWorkspace]=useState<Workspace>(seed); const [ready,setReady]=useState(false); const [user,setUser]=useState<User|null>(null); const [remoteLoaded,setRemoteLoaded]=useState(false); const [remoteError,setRemoteError]=useState(false); const [tab,setTab]=useState('Overview'); const [newName,setNewName]=useState(''); const [newType,setNewType]=useState('Camping'); const [newLocation,setNewLocation]=useState('Osaka, Japan'); const [newStart,setNewStart]=useState(new Date(Date.now()+7*86400000).toISOString().slice(0,10)); const [newEnd,setNewEnd]=useState(new Date(Date.now()+9*86400000).toISOString().slice(0,10)); const [newBudget,setNewBudget]=useState('15000'); const [itemName,setItemName]=useState(''); const [memberName,setMemberName]=useState(''); const [expenseName,setExpenseName]=useState(''); const [expenseAmount,setExpenseAmount]=useState(''); const [expensePayer,setExpensePayer]=useState(''); const [notice,setNotice]=useState('');
  const [noticeParams,setNoticeParams]=useState<Record<string,string|number>>({});
  const [newMemberNames,setNewMemberNames]=useState('');
+ const [isCustomTripType,setIsCustomTripType]=useState(false);
  const newTravelers=newMemberNames.split('\n').map(name=>name.trim()).filter(Boolean);
  const [memberToRemove,setMemberToRemove]=useState<Member|null>(null);
  const applyingDraft=useRef('');
@@ -271,7 +272,18 @@ export default function Home(){
    <div className="panel-head"><div><h3 id="create-trip-title">{tr('Create a new trip')}</h3><p>{tr('Choose a template or enter a custom trip type. Review the checklist before saving.')}</p></div><Plus className="muted-icon"/></div>
    <fieldset disabled={draftLoading || !!tripDraft} className="trip-details"><form className="create-form" onSubmit={e=>{e.preventDefault();void addTrip();}}>
      <label>{tr('Trip name')}<input maxLength={200} value={newName} onChange={e=>setNewName(e.target.value)} placeholder={tr('e.g. Summer beach trip')}/></label>
-     <label>{tr('Trip type')}<input value={newType} onChange={e=>setNewType(e.target.value)} list="trip-type-options" required maxLength={60} placeholder={tr('Choose or enter a trip type')}/><datalist id="trip-type-options">{Object.keys(templates).map(type=><option key={type} value={type} label={tr(type)}/>)}</datalist></label>
+     <label>{tr('Trip type')}
+       <select value={isCustomTripType ? '' : newType} onChange={e=>{
+         setIsCustomTripType(e.target.value === '');
+         setNewType(e.target.value);
+       }}>
+         {Object.keys(templates).map(type=><option key={type} value={type}>{tr(type)}</option>)}
+         <option value="">{tr('Custom trip type')}</option>
+       </select>
+     </label>
+     {isCustomTripType && <label>{tr('Custom trip type')}
+       <input value={newType} onChange={e=>setNewType(e.target.value)} required maxLength={60}/>
+     </label>}
      <label>{tr('Destination')}<input required maxLength={200} value={newLocation} onChange={e=>setNewLocation(e.target.value)} placeholder={tr('Example: Osaka, Japan')}/></label>
      <label>{tr('Start date')}<input type="date" required min={minTripDate} value={newStart} onChange={e=>{const value=e.target.value;if(value&&value<minTripDate){setDraftError('Start date must be today or later.');return;}setNewStart(value);if(value&&newEnd<value)setNewEnd(value);setDraftError('');}}/></label>
      <label>{tr('End date')}<input type="date" required min={minEndDate} value={newEnd} onChange={e=>{const value=e.target.value;if(value&&value<minEndDate){setDraftError('End date must be on or after the start date.');return;}setNewEnd(value);setDraftError('');}}/></label>

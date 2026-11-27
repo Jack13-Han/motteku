@@ -1,4 +1,5 @@
 export const nanMessages: Record<string, string> = {
+  "Custom trip type": "独自の旅行タイプ",
   "Choose a template or enter a custom trip type. Review the checklist before saving.": "テンプレートを選ぶか旅行の種類を入力し、保存前に持ち物を確認してください。",
   "Generate checklist preview": "持ち物リストをプレビュー",
   "AI checklist is unavailable. Review the starter items or add your own.": "AI の持ち物リストを取得できませんでした。基本の持ち物を確認するか、必要なものを追加してください。",
