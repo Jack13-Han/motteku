@@ -22,7 +22,7 @@ export const coverImageTypes = ['image/jpeg', 'image/png', 'image/webp'];
 export const coverImageSizeLimit = 5 * 1024 * 1024;
 
 function normalize(value: string) {
-  return value.normalize('NFKD').toLowerCase().replace(/\p{M}/gu, '').trim();
+  return typeof value === 'string' ? value.normalize('NFKD').toLowerCase().replace(/\p{M}/gu, '').trim() : '';
 }
 
 export function findDestinationCover(destination: string): TripCover | undefined {
@@ -45,11 +45,11 @@ export function tripCoverCandidates(trip: Partial<TripCover> & { location: strin
   const automatic = getDestinationCoverImage(trip.location, trip.type);
   const fallback = getDestinationCoverImage('', trip.type);
   const covers = [automatic, fallback, defaultTripCover];
-  if (trip.coverImageSource === 'uploaded' && trip.coverImageUrl?.startsWith('https://')) {
+  if (trip.coverImageSource === 'uploaded' && typeof trip.coverImageUrl === 'string' && trip.coverImageUrl.startsWith('https://')) {
     covers.unshift({
       coverImageSource: 'uploaded',
       coverImageUrl: trip.coverImageUrl,
-      coverImageAttribution: trip.coverImageAttribution,
+      ...(typeof trip.coverImageAttribution === 'string' ? { coverImageAttribution: trip.coverImageAttribution } : {}),
     });
   }
   return [...new Map(covers.map(cover => [cover.coverImageUrl, cover])).values()];

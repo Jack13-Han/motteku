@@ -10,10 +10,11 @@ type Props = {
   onChange: (activities: TripActivity[]) => void;
 };
 
+const emptyActivityDraft = (startDate: string): ActivityDraft => ({ title: '', date: startDate, startTime: '09:00', endTime: '10:00', location: '', category: 'Sightseeing' });
+
 export default function TripItinerary({ trip, onChange }: Props) {
   const { t: tr, date } = useLanguage();
-  const empty = (): ActivityDraft => ({ title: '', date: trip.startDate, startTime: '09:00', endTime: '10:00', location: '', category: 'Sightseeing' });
-  const [draft, setDraft] = useState<ActivityDraft>(empty);
+  const [draft, setDraft] = useState<ActivityDraft>(() => emptyActivityDraft(trip.startDate));
   const [editingId, setEditingId] = useState('');
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
@@ -22,7 +23,7 @@ export default function TripItinerary({ trip, onChange }: Props) {
   const dates = [...new Set(activities.map(activity => activity.date))];
   const validDates = validItineraryDates(trip.startDate, trip.endDate);
 
-  useEffect(() => { setDraft(empty()); setEditingId(''); setError(''); setStatus(''); }, [trip.id]);
+  useEffect(() => { setDraft(emptyActivityDraft(trip.startDate)); setEditingId(''); setError(''); setStatus(''); }, [trip.id, trip.startDate]);
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -32,7 +33,7 @@ export default function TripItinerary({ trip, onChange }: Props) {
       const id = editingId || globalThis.crypto?.randomUUID?.() || 'activity-' + Date.now() + '-' + Math.random().toString(36).slice(2);
       onChange(upsertActivity(activities, draft, id, trip.startDate, trip.endDate));
       setStatus(editingId ? 'Activity updated.' : 'Activity added.');
-      setDraft(empty()); setEditingId(''); setError('');
+      setDraft(emptyActivityDraft(trip.startDate)); setEditingId(''); setError('');
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Check your input.'); }
   }
 
@@ -44,7 +45,7 @@ export default function TripItinerary({ trip, onChange }: Props) {
 
   function remove(id: string) {
     onChange(removeActivity(activities, id));
-    if (id === editingId) { setDraft(empty()); setEditingId(''); setError(''); }
+    if (id === editingId) { setDraft(emptyActivityDraft(trip.startDate)); setEditingId(''); setError(''); }
     setStatus('Activity removed.');
   }
 
@@ -69,7 +70,7 @@ export default function TripItinerary({ trip, onChange }: Props) {
         <label className="field">{tr('Activity location')}<input maxLength={160} value={draft.location} onChange={event => setDraft({ ...draft, location: event.target.value })} /></label>
         {error && <p className="notice" role="alert">{tr(error)}</p>}
         {status && <p role="status">{tr(status)}</p>}
-        <div className="itinerary-form-actions"><button className="primary" type="submit">{editingId ? <Save size={17} /> : <Plus size={17} />}{tr(editingId ? 'Save activity' : 'Add activity')}</button>{editingId && <button type="button" onClick={() => { setDraft(empty()); setEditingId(''); setError(''); setStatus(''); }}>{tr('Cancel editing')}</button>}</div>
+        <div className="itinerary-form-actions"><button className="primary" type="submit">{editingId ? <Save size={17} /> : <Plus size={17} />}{tr(editingId ? 'Save activity' : 'Add activity')}</button>{editingId && <button type="button" onClick={() => { setDraft(emptyActivityDraft(trip.startDate)); setEditingId(''); setError(''); setStatus(''); }}>{tr('Cancel editing')}</button>}</div>
         <p className="muted">{tr('Itinerary is saved in your workspace.')}</p>
       </form> : <div className="itinerary-form"><p role="status">{tr('Create a trip with valid travel dates to plan activities.')}</p>{status && <p role="status">{tr(status)}</p>}</div>}
     </div>

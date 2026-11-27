@@ -439,11 +439,6 @@ export default function AuthForm({ mode }: AuthFormProps) {
     }
   }
 
-  const translatedError = (message: string) => {
-    if (message === 'Firebase Authentication is not configured. Check your Firebase project settings.') return t(message);
-    return t(message);
-  };
-
   return (
     <main className="auth-page">
       <TravelScenery />
@@ -453,7 +448,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
       {(error || info) && (
         <div className={`auth-toast ${error ? 'auth-toast-error' : 'auth-toast-info'}`} role={error ? 'alert' : 'status'} aria-live={error ? 'assertive' : 'polite'}>
           <span className="auth-toast-icon">{error ? <CircleAlert size={18} /> : <Info size={18} />}</span>
-          <span>{error ? translatedError(error) : t(info)}</span>
+          <span>{t(error || info)}</span>
         </div>
       )}
       <section className="auth-card" aria-label={t(isRegister ? 'Create your Motteku account' : 'Welcome back')}>
