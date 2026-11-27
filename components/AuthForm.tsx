@@ -440,8 +440,8 @@ export default function AuthForm({ mode }: AuthFormProps) {
         </header>
         <nav className="auth-mode-switch" aria-label={t('Authentication mode')}>
           <span className={`auth-mode-indicator ${isRegister ? 'signup-active' : ''}`} aria-hidden="true" />
-          <Link href={loginHref} aria-current={!isRegister ? 'page' : undefined}>{t('Sign In')}</Link>
-          <Link href={registerHref} aria-current={isRegister ? 'page' : undefined}>{t('Sign Up')}</Link>
+          <Link href={loginHref} scroll={false} aria-current={!isRegister ? 'page' : undefined}>{t('Sign In')}</Link>
+          <Link href={registerHref} scroll={false} aria-current={isRegister ? 'page' : undefined}>{t('Sign Up')}</Link>
         </nav>
 
         {success ? <div className="auth-success" role="status" aria-live="polite">
