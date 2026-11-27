@@ -59,6 +59,7 @@ export default function AccountMenu({ user, onLogout, loggingOut }: AccountMenuP
 
   useEffect(() => {
     if (!settingsOpen) return;
+    const returnFocus = trigger.current;
     nameInput.current?.focus();
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -76,7 +77,7 @@ export default function AccountMenu({ user, onLogout, loggingOut }: AccountMenuP
     return () => {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener('keydown', keyboard);
-      trigger.current?.focus();
+      returnFocus?.focus();
     };
   }, [settingsOpen]);
 

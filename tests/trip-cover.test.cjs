@@ -72,6 +72,23 @@ function harness(options = {}) {
 }
 const valid = { type: 'image/webp', size: 1000 };
 
+test('missing or malformed destination and trip type values safely select a bundled cover', () => {
+  for (const value of [undefined, null, 42, true, {}, []]) {
+    assert.equal(helpers.findDestinationCover(value), undefined);
+    assert.deepEqual(helpers.tripCoverCandidates({ location: value, type: value }), [helpers.defaultTripCover]);
+    assert.match(helpers.getDestinationCoverImage(value, 'Camping').coverImageUrl, /camping.webp$/);
+  }
+});
+
+test('malformed uploaded URLs and attribution cannot become image or React child values', () => {
+  for (const coverImageUrl of [undefined, null, 42, {}, [], 'javascript:alert(1)']) {
+    assert.equal(helpers.tripCoverCandidates({ location: 'Osaka', type: 'Camping', coverImageSource: 'uploaded', coverImageUrl })[0].coverImageSource, 'destination');
+  }
+  const cover = helpers.tripCoverCandidates({ location: '', type: '', coverImageSource: 'uploaded', coverImageUrl: 'https://example.test/image.webp', coverImageAttribution: { unexpected: true } })[0];
+  assert.equal(cover.coverImageSource, 'uploaded');
+  assert.equal(cover.coverImageAttribution, undefined);
+});
+
 test('failed cover preloads fall back through destination, trip type and bundled default', () => {
   const ui = harness();
   const image = ui.images[0];
