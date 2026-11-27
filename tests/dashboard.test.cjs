@@ -72,6 +72,7 @@ function render(weather) {
     react: { useEffect: () => {}, useState: initial => [weather || initial, () => {}] },
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
     'lucide-react': new Proxy({}, { get: (_, name) => name }),
+    './TripCoverImage': { default: 'trip-cover' },
     '@/lib/i18n': { useLanguage: () => ({ language: 'en', t, date: value => value }) },
   }).default;
   const tree = component({ trip, packed: 3, total: 8, spent: 2345, onNavigate: tab => navigated.push(tab), onDeleteTrip: () => deleted.push(true) });
@@ -116,4 +117,41 @@ test('weather preview is explicitly labelled with the available day rather than 
   assert.match(output.text, /3°C/);
   assert.match(output.text, /Upcoming weather/);
   assert.doesNotMatch(output.text, /Trip forecast/);
+});
+
+test('cover selection uses the trip location, tracks destination changes, and falls back by trip type', () => {
+  const { tripCoverCandidates, getDestinationCoverImage } = load('lib/tripCover.ts');
+  const selected = { ...trip, name: 'Tokyo adventure', location: '  BAGAN, Bago Region, Myanmar  ' };
+  assert.deepEqual(tripCoverCandidates(selected).map(cover => cover.coverImageUrl), [
+    '/images/trip-covers/bagan.webp', '/images/trip-covers/camping.webp', '/images/trip-covers/default.webp',
+  ]);
+  assert.match(tripCoverCandidates({ ...selected, location: '東京都、日本' })[0].coverImageUrl, /tokyo/);
+  assert.match(tripCoverCandidates({ ...selected, location: 'Unknown coast', type: 'Beach' })[0].coverImageUrl, /beach/);
+  assert.equal(getDestinationCoverImage('Parisian district', 'Other').coverImageSource, 'default');
+  for (const city of ['Osaka', 'Tokyo', 'Kyoto', 'Paris']) {
+    assert.equal(getDestinationCoverImage(city + ', region, country', 'Other').coverImageUrl, '/images/trip-covers/' + city.toLowerCase() + '.webp');
+  }
+});
+
+test('uploaded cover takes priority and an explicit default bypasses automatic selection', () => {
+  const { tripCoverCandidates } = load('lib/tripCover.ts');
+  const uploaded = { ...trip, location: 'Paris, France', coverImageSource: 'uploaded', coverImageUrl: 'https://example.test/cover.webp' };
+  assert.deepEqual(tripCoverCandidates(uploaded).map(cover => cover.coverImageSource), ['uploaded', 'destination', 'tripType', 'default']);
+  assert.deepEqual(tripCoverCandidates({ ...uploaded, coverImageSource: 'default' }).map(cover => cover.coverImageSource), ['default']);
+});
+
+test('cover actions and feedback have English and Japanese translations', () => {
+  const { translate } = load('lib/messages.ts');
+  const labels = {
+    'Change cover': 'カバー画像を変更',
+    'Find a photo for this location': 'この場所の写真を探す',
+    'Upload my photo': '写真をアップロード',
+    'Use default image': 'デフォルト画像を使用',
+    'Cover image updated': 'カバー画像を更新しました',
+    'Could not load the image': '画像を読み込めませんでした',
+  };
+  for (const [english, japanese] of Object.entries(labels)) {
+    assert.equal(translate('en', english), english);
+    assert.equal(translate('ja', english), japanese);
+  }
 });

@@ -1,0 +1,87 @@
+name: Weekly branch integration
+
+on:
+  schedule:
+    # Monday 09:00 Asia/Tokyo (UTC+9).
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: motteku-weekly-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || 'scan' }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    if: github.event_name != 'workflow_run' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      has_updates: ${{ steps.plan.outputs.has_updates }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Inspect and combine branch snapshots without running their code
+        id: plan
+        run: node .github/scripts/weekly-merge.cjs plan
+      - name: Keep the report and immutable candidate bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/motteku-weekly/
+          retention-days: 30
+
+  publish-candidate:
+    needs: scan
+    if: needs.scan.outputs.has_updates == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Configure this environment to allow deployments from main ONLY.
+    environment: weekly-main-merge
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: weekly-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/motteku-weekly/
+      - name: Open a candidate PR using trusted main code
+        env:
+          WEEKLY_MERGE_TOKEN: ${{ secrets.MOTTEKU_MERGE_TOKEN }}
+        run: node .github/scripts/weekly-merge.cjs publish
+
+  merge-after-ci:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'automation/weekly-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: weekly-main-merge
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Publish the exact tested commit without a force push
+        env:
+          WEEKLY_MERGE_TOKEN: ${{ secrets.MOTTEKU_MERGE_TOKEN }}
+        run: node .github/scripts/weekly-merge.cjs finalize
